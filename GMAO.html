@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+
+  <!-- PWA iOS -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="GMAO">
+  <meta name="theme-color" content="#0d1117">
+
+  <!-- Icône home screen (SVG en data URI) -->
+  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%230d1117'/%3E%3Ctext x='90' y='120' text-anchor='middle' font-family='system-ui' font-weight='700' font-size='72' fill='%23e8970a'%3E⚙%3C/text%3E%3C/svg%3E">
+
+  <title>GMAO</title>
+  <style>
+    :root {
+      --bg: #0d1117; --surface: #161b22; --surface2: #1c2128;
+      --border: #30363d; --text: #e6edf3; --muted: #8b949e;
+      --accent: #e8970a; --success: #3fb950; --warning: #d29922;
+      --danger: #f85149; --info: #58a6ff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif; overflow: hidden; }
+
+    #app { height: 100vh; height: 100dvh; display: flex; flex-direction: column; }
+    #sb { height: env(safe-area-inset-top); background: var(--bg); flex-shrink: 0; }
+    #content { flex: 1; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; }
+
+    /* NAV BAS */
+    #nav { display: flex; background: var(--surface); border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom); flex-shrink: 0; }
+    .ni { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 9px 4px 8px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 9px; font-family: -apple-system, sans-serif; letter-spacing: 0.02em; position: relative; }
+    .ni.on { color: var(--accent); }
+    .ni-ic { font-size: 23px; line-height: 1; }
+    .nb { position: absolute; top: 5px; right: calc(50% - 16px); background: var(--danger); color: #fff; border-radius: 10px; font-size: 9px; font-weight: 700; padding: 1px 5px; min-width: 16px; text-align: center; }
+
+    /* HEADER PAGE */
+    .ph { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 12px; position: sticky; top: 0; background: var(--bg); z-index: 10; border-bottom: 1px solid var(--border); }
+    .pt { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+    .ps { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    /* CARDS */
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; margin: 0 14px 12px; }
+    .ci { padding: 13px 14px; border-bottom: 1px solid var(--border)22; display: flex; align-items: center; gap: 11px; cursor: pointer; -webkit-user-select: none; }
+    .ci:last-child { border-bottom: none; }
+    .ci:active { background: var(--surface2); }
+
+    /* KPI */
+    .kg { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 14px; }
+    .kc { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 13px; }
+    .kv { font-size: 30px; font-weight: 700; line-height: 1; margin-bottom: 5px; }
+    .kl { font-size: 12px; font-weight: 600; }
+    .ks { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+    /* BADGE */
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 100px; font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+
+    /* SEARCH */
+    .sc { padding: 10px 14px 0; position: sticky; top: 68px; background: var(--bg); z-index: 9; }
+    .si { width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; color: var(--text); padding: 10px 14px; font-size: 15px; font-family: -apple-system, sans-serif; outline: none; }
+    .si::placeholder { color: var(--muted); }
+
+    /* FAB */
+    .fab { position: fixed; right: 18px; bottom: calc(68px + env(safe-area-inset-bottom) + 10px); width: 54px; height: 54px; border-radius: 27px; background: var(--accent); border: none; color: #000; font-size: 30px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 18px rgba(232,151,10,.45); z-index: 20; font-weight: 300; }
+
+    /* CHIPS FILTRE */
+    .chips { display: flex; gap: 7px; padding: 10px 14px 8px; overflow-x: auto; scrollbar-width: none; }
+    .chips::-webkit-scrollbar { display: none; }
+    .chip { flex-shrink: 0; padding: 6px 13px; border-radius: 100px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; font-family: -apple-system, sans-serif; white-space: nowrap; }
+    .chip.on { background: var(--accent); border-color: var(--accent); color: #000; }
+
+    /* MODAL BOTTOM SHEET */
+    .mo { position: fixed; inset: 0; background: rgba(0,0,0,.72); z-index: 50; display: flex; align-items: flex-end; animation: fi .2s ease; }
+    @keyframes fi { from { opacity: 0; } to { opacity: 1; } }
+    .ms { width: 100%; background: var(--surface); border-radius: 20px 20px 0 0; max-height: 93vh; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: max(env(safe-area-inset-bottom), 16px); animation: su .3s cubic-bezier(.34,1.56,.64,1); }
+    @keyframes su { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    .mh { width: 36px; height: 4px; background: var(--border); border-radius: 2px; margin: 12px auto 0; }
+    .mhd { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+    .mt { font-size: 17px; font-weight: 700; }
+    .mc { background: var(--surface2); border: none; color: var(--muted); cursor: pointer; width: 28px; height: 28px; border-radius: 14px; font-size: 18px; display: flex; align-items: center; justify-content: center; }
+    .mb { padding: 16px 18px; }
+
+    /* FORM */
+    .fi { margin-bottom: 14px; }
+    .fl { display: block; font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 5px; }
+    .inp, .sel, .ta { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; color: var(--text); padding: 12px 13px; font-size: 15px; font-family: -apple-system, sans-serif; outline: none; -webkit-appearance: none; }
+    .ta { resize: vertical; min-height: 76px; }
+    .sel { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238b949e' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 34px; }
+    .g2 { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+    .g3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+
+    /* BOUTONS */
+    .bp { width: 100%; background: var(--accent); border: none; border-radius: 12px; color: #000; font-size: 16px; font-weight: 700; padding: 14px; cursor: pointer; font-family: -apple-system, sans-serif; margin-top: 6px; }
+    .bs { background: var(--surface2); border: 1px solid var(--border); border-radius: 9px; color: var(--text); font-size: 13px; font-weight: 600; padding: 7px 13px; cursor: pointer; font-family: -apple-system, sans-serif; }
+    .bd { background: transparent; border: 1px solid var(--danger); border-radius: 9px; color: var(--danger); font-size: 14px; font-weight: 600; padding: 10px; cursor: pointer; font-family: -apple-system, sans-serif; width: 100%; margin-bottom: 10px; }
+    .bq { background: rgba(88,166,255,.12); border: 1px solid rgba(88,166,255,.3); border-radius: 8px; color: var(--info); font-size: 12px; font-weight: 600; padding: 6px 10px; cursor: pointer; font-family: -apple-system, sans-serif; }
+
+    /* QUANTITE STOCK */
+    .qc { display: flex; align-items: center; gap: 10px; }
+    .qb { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 20px; display: flex; align-items: center; justify-content: center; cursor: pointer; line-height: 1; }
+    .qv { font-family: 'SF Mono', monospace; font-size: 17px; font-weight: 700; min-width: 30px; text-align: center; }
+
+    /* SCANNER */
+    #scan-vid { width: 100%; border-radius: 12px; aspect-ratio: 4/3; object-fit: cover; display: block; background: #000; }
+
+    /* EMPTY */
+    .empty { text-align: center; padding: 40px 20px; color: var(--muted); }
+    .empty-i { font-size: 44px; margin-bottom: 12px; }
+
+    /* SECTION TITRE */
+    .st { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; padding: 14px 14px 7px; }
+
+    /* INSTALL BANNER */
+    #install-tip { background: var(--surface); border-bottom: 1px solid var(--border); padding: 10px 16px; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+    #install-tip button { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 18px; margin-left: auto; }
+
+    hr.div { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+    .mono { font-family: 'SF Mono', 'JetBrains Mono', monospace; font-size: 12px; }
+    ::-webkit-scrollbar { width: 0; height: 0; }
+    .sp { height: 88px; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div id="sb"></div>
+  <div id="content"></div>
+  <nav id="nav"></nav>
+</div>
+
+<script>
+// ═══════════════════════════════════
+// CONSTANTES & HELPERS
+// ═══════════════════════════════════
+const C = { accent:'#e8970a', success:'#3fb950', warning:'#d29922', danger:'#f85149', info:'#58a6ff', muted:'#8b949e', text:'#e6edf3' };
+
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
+const today = () => new Date().toISOString().split('T')[0];
+const isOverdue = d => d && new Date(d) < new Date();
+const daysUntil = d => d ? Math.ceil((new Date(d) - new Date()) / 86400000) : null;
+const fmt = d => d ? new Date(d).toLocaleDateString('fr-FR') : '—';
+const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+const statusCol = s => ({'en service':C.success,'en panne':C.danger,'en maintenance':C.warning,'hors service':C.muted,'ouvert':C.info,'en cours':C.warning,'terminé':C.success,'annulé':C.muted}[s]||C.muted);
+const prioCol   = p => ({'urgent':C.danger,'haute':'#ff9580','normale':C.info,'basse':C.muted}[p]||C.muted);
+const badge     = (l,col) => `<span class="badge" style="color:${col};background:${col}22;border:1px solid ${col}44">${esc(l)}</span>`;
+const eqIcon    = t => ({'électrique':'⚡','hydraulique':'💧','pneumatique':'💨','mécanique':'⚙','thermique':'🔥'}[t]||'🔧');
+
+const nextOT = ots => {
+  const n = ots.map(o => parseInt(o.numero?.replace('OT-','')||'0')).filter(x=>!isNaN(x));
+  return `OT-${String((n.length?Math.max(...n):0)+1).padStart(3,'0')}`;
+};
+
+const FREQ_DAYS = {hebdomadaire:7,mensuel:30,trimestriel:90,semestriel:182,annuel:365};
+
+// ═══════════════════════════════════
+// QR
+// ═══════════════════════════════════
+const QR_PFX = 'GMAO|eq|';
+const qrUrl   = (eq, sz=240) => `https://api.qrserver.com/v1/create-qr-code/?size=${sz}x${sz}&bgcolor=ffffff&color=0d1117&qzone=1&data=${encodeURIComponent(QR_PFX+eq.id)}`;
+const parseQR = str => str.startsWith(QR_PFX) ? str.slice(QR_PFX.length) : null;
+
+// ═══════════════════════════════════
+// STORAGE
+// ═══════════════════════════════════
+const lsLoad = (k,fb) => { try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;} };
+const lsSave = (k,d) => { try{localStorage.setItem(k,JSON.stringify(d));}catch{} };
+
+// ═══════════════════════════════════
+// DEMO DATA
+// ═══════════════════════════════════
+const ID1='eq-001',ID2='eq-002',ID3='eq-003';
+const DEMO_EQ=[
+  {id:ID1,nom:'Compresseur Atlas Copco GA15',type:'pneumatique',localisation:'Salle des machines',statut:'en service',dateMAJ:'2026-04-10',observations:''},
+  {id:ID2,nom:'Pompe hydraulique P-01',type:'hydraulique',localisation:'Atelier B',statut:'en maintenance',dateMAJ:'2026-05-01',observations:'Fuite joint détectée'},
+  {id:ID3,nom:'Tableau électrique TGT',type:'électrique',localisation:'Local électrique',statut:'en service',dateMAJ:'2026-03-15',observations:''},
+];
+const DEMO_OT=[
+  {id:uid(),numero:'OT-001',titre:'Remplacement joint pompe P-01',equipementId:ID2,type:'correctif',priorite:'haute',statut:'en cours',description:'Joint torique HS',dateCreation:'2026-05-01',datePrevue:'2026-05-14',dateCloture:'',technicien:'Pierre',observations:''},
+  {id:uid(),numero:'OT-002',titre:'Vidange + filtre compresseur',equipementId:ID1,type:'préventif',priorite:'normale',statut:'ouvert',description:'Vidange huile 2000h',dateCreation:'2026-05-10',datePrevue:'2026-05-22',dateCloture:'',technicien:'Pierre',observations:''},
+];
+const DEMO_PREV=[
+  {id:uid(),equipementId:ID1,tache:'Vidange huile compresseur',frequence:'semestriel',dernierPassage:'2025-11-15',prochaineEcheance:'2026-05-15',technicien:'Pierre',observations:''},
+  {id:uid(),equipementId:ID3,tache:'Contrôle connexions électriques',frequence:'annuel',dernierPassage:'2025-12-01',prochaineEcheance:'2026-12-01',technicien:'Pierre',observations:''},
+  {id:uid(),equipementId:ID2,tache:'Contrôle niveau huile',frequence:'mensuel',dernierPassage:'2026-04-15',prochaineEcheance:'2026-05-15',technicien:'Pierre',observations:''},
+];
+const DEMO_STOCK=[
+  {id:uid(),reference:'JT-32X3',designation:'Joint torique 32×3 NBR',categorie:'Joints',quantite:5,seuilAlerte:3,localisation:'Rayonnage A-12',fournisseur:'Rubix',prixUnitaire:2.50,observations:''},
+  {id:uid(),reference:'FLT-AIR-01',designation:'Filtre à air compresseur GA15',categorie:'Filtration',quantite:1,seuilAlerte:2,localisation:'Rayonnage B-03',fournisseur:'Atlas Copco',prixUnitaire:45.00,observations:''},
+  {id:uid(),reference:'HUI-HYD-46',designation:'Huile hydraulique ISO 46 (5L)',categorie:'Lubrifiants',quantite:8,seuilAlerte:4,localisation:'Stockage huiles',fournisseur:'Total',prixUnitaire:32.00,observations:''},
+];
+
+// ═══════════════════════════════════
+// STATE
+// ═══════════════════════════════════
+const S = {
+  page:'dashboard',
+  eq: lsLoad('gmao-eq',DEMO_EQ),
+  ots: lsLoad('gmao-ot',DEMO_OT),
+  prev: lsLoad('gmao-prev',DEMO_PREV),
+  stock: lsLoad('gmao-stock',DEMO_STOCK),
+  search:{eq:'',ots:'',prev:'',stock:''},
+  otFilter:'all',
+};
+
+function saveAll() {
+  lsSave('gmao-eq',S.eq); lsSave('gmao-ot',S.ots);
+  lsSave('gmao-prev',S.prev); lsSave('gmao-stock',S.stock);
+}
+
+// ═══════════════════════════════════
+// NAV
+// ═══════════════════════════════════
+const TABS=[
+  {id:'dashboard',ic:'◈',lb:'Accueil'},
+  {id:'equipements',ic:'⚙',lb:'Machines'},
+  {id:'ots',ic:'🔧',lb:'OT'},
+  {id:'preventif',ic:'📅',lb:'Préventif'},
+  {id:'stock',ic:'📦',lb:'Stock'},
+];
+
+function renderNav() {
+  const oA = S.ots.filter(o=>!['terminé','annulé'].includes(o.statut)&&(o.priorite==='urgent'||isOverdue(o.datePrevue))).length;
+  const sA = S.stock.filter(s=>s.quantite<=s.seuilAlerte).length;
+  const pA = S.prev.filter(p=>{const d=daysUntil(p.prochaineEcheance);return d!==null&&d<=7;}).length;
+  const al = {dashboard:oA+sA+pA,ots:oA,stock:sA,preventif:pA};
+
+  document.getElementById('nav').innerHTML = TABS.map(t => {
+    const a = al[t.id]||0;
+    return `<button class="ni ${S.page===t.id?'on':''}" onclick="go('${t.id}')">
+      <span class="ni-ic">${t.ic}</span>
+      <span>${t.lb}</span>
+      ${a>0?`<span class="nb">${a}</span>`:''}
+    </button>`;
+  }).join('');
+}
+
+function go(page) { S.page=page; render(); }
+
+// ═══════════════════════════════════
+// RENDER
+// ═══════════════════════════════════
+function render() {
+  renderNav();
+  const wasFocused = document.activeElement?.classList.contains('si');
+  const focusedId = document.activeElement?.id;
+  const focusedVal = document.activeElement?.value;
+
+  const fn = {dashboard:pgDashboard,equipements:pgEquipements,ots:pgOTs,preventif:pgPreventif,stock:pgStock};
+  document.getElementById('content').innerHTML = (fn[S.page]||pgDashboard)();
+
+  // Restore search focus after re-render
+  if (wasFocused && focusedId) {
+    const el = document.getElementById(focusedId);
+    if (el) { el.focus(); el.setSelectionRange && el.setSelectionRange(el.value.length,el.value.length); }
+  }
+}
+
+// ═══════════════════════════════════
+// DASHBOARD
+// ═══════════════════════════════════
+function pgDashboard() {
+  const actifs = S.ots.filter(o=>!['terminé','annulé'].includes(o.statut));
+  const retards = actifs.filter(o=>isOverdue(o.datePrevue));
+  const urgents = actifs.filter(o=>o.priorite==='urgent');
+  const prev30 = S.prev.filter(p=>{const d=daysUntil(p.prochaineEcheance);return d!==null&&d<=30;});
+  const sAlt = S.stock.filter(s=>s.quantite<=s.seuilAlerte);
+  const pannes = S.eq.filter(e=>e.statut==='en panne');
+
+  const kpi = (v,l,s,col) => `
+    <div class="kc" style="border-left:3px solid ${col}">
+      <div class="kv" style="color:${col}">${v}</div>
+      <div class="kl">${l}</div>
+      ${s?`<div class="ks">${s}</div>`:''}
+    </div>`;
+
+  const otRow = ot => {
+    const eq=S.eq.find(e=>e.id===ot.equipementId);
+    return `<div class="ci">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+          <span class="mono" style="color:var(--accent)">${esc(ot.numero)}</span> ${esc(ot.titre)}
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px">${esc(eq?.nom||'—')} · ${fmt(ot.datePrevue)}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:3px;align-items:flex-end;flex-shrink:0">
+        ${badge(ot.priorite,prioCol(ot.priorite))}
+        ${isOverdue(ot.datePrevue)?badge('retard',C.danger):''}
+      </div>
+    </div>`;
+  };
+
+  const prevRow = p => {
+    const eq=S.eq.find(e=>e.id===p.equipementId);
+    const d=daysUntil(p.prochaineEcheance);
+    const col=d<=0?C.danger:d<=7?C.warning:C.info;
+    return `<div class="ci">
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:600">${esc(p.tache)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(eq?.nom||'—')} · ${p.frequence}</div>
+      </div>
+      <div style="color:${col};font-family:monospace;font-size:12px;text-align:right;flex-shrink:0">
+        ${fmt(p.prochaineEcheance)}<br><span style="font-size:10px">${d<=0?`RETARD ${Math.abs(d)}j`:`J-${d}`}</span>
+      </div>
+    </div>`;
+  };
+
+  return `
+    <div class="ph">
+      <div>
+        <div class="pt">Tableau de bord</div>
+        <div class="ps">${new Date().toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'})}</div>
+      </div>
+    </div>
+
+    <div class="kg">
+      ${kpi(S.eq.length,'Équipements',pannes.length?`${pannes.length} en panne`:'Tous opérationnels',pannes.length?C.danger:C.success)}
+      ${kpi(actifs.length,'OT actifs',retards.length?`${retards.length} en retard`:urgents.length?`${urgents.length} urgent(s)`:'OK',(urgents.length||retards.length)?C.danger:C.warning)}
+      ${kpi(prev30.length,'Maintenances 30j',prev30.filter(p=>daysUntil(p.prochaineEcheance)<=7).length+' sous 7j',prev30.filter(p=>daysUntil(p.prochaineEcheance)<=7).length?C.danger:C.info)}
+      ${kpi(sAlt.length,'Alertes stock',sAlt.length?'Réappro nécessaire':'Stock OK',sAlt.length?C.warning:C.success)}
+    </div>
+
+    ${actifs.length?`<div class="st">OT EN COURS</div><div class="card">${actifs.slice(0,5).map(otRow).join('')}</div>`:''}
+    ${prev30.length?`<div class="st">MAINTENANCES À VENIR</div><div class="card">${[...prev30].sort((a,b)=>new Date(a.prochaineEcheance)-new Date(b.prochaineEcheance)).slice(0,5).map(prevRow).join('')}</div>`:''}
+    ${sAlt.length?`
+    <div class="st" style="color:${C.warning}">⚠ ALERTES STOCK</div>
+    <div class="card" style="border-left:3px solid ${C.warning}">
+      ${sAlt.map(s=>`<div class="ci">
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:600">${esc(s.designation)}</div>
+          <div style="font-size:11px;color:var(--muted)">${esc(s.reference)} · ${esc(s.localisation)}</div>
+        </div>
+        <div style="color:${C.warning};font-family:monospace;font-size:18px;font-weight:700">${s.quantite}<span style="color:var(--muted);font-size:11px">/${s.seuilAlerte}</span></div>
+      </div>`).join('')}
+    </div>`:''}
+    <div class="sp"></div>`;
+}
+
+// ═══════════════════════════════════
+// ÉQUIPEMENTS
+// ═══════════════════════════════════
+function pgEquipements() {
+  const q = S.search.eq.toLowerCase();
+  const list = S.eq.filter(e=>e.nom.toLowerCase().includes(q)||e.localisation.toLowerCase().includes(q)||e.type.toLowerCase().includes(q));
+
+  return `
+    <div class="ph">
+      <div>
+        <div class="pt">Équipements</div>
+        <div class="ps">${list.length} machine(s)</div>
+      </div>
+      <div style="display:flex;gap:7px">
+        <button class="bs" onclick="printAllQR()" style="padding:7px 10px">🖨</button>
+        <button class="bq" onclick="openScanner()">📷 Scanner</button>
+      </div>
+    </div>
+
+    <div class="sc">
+      <input id="eq-search" class="si" placeholder="Rechercher…" value="${esc(S.search.eq)}"
+        oninput="S.search.eq=this.value;render()" />
+    </div>
+
+    ${list.length===0?`<div class="empty"><div class="empty-i">⚙</div><div>Aucun équipement</div></div>`:`
+    <div class="card" style="margin-top:10px">
+      ${list.map(eq=>`
+        <div class="ci" onclick="modalEq('${eq.id}')">
+          <div style="width:42px;height:42px;border-radius:11px;background:${statusCol(eq.statut)}18;border:1px solid ${statusCol(eq.statut)}33;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">${eqIcon(eq.type)}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(eq.nom)}</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px">📍 ${esc(eq.localisation)}</div>
+            <div style="margin-top:5px">${badge(eq.statut,statusCol(eq.statut))}</div>
+          </div>
+          <button class="bq" onclick="event.stopPropagation();showQR('${eq.id}')" style="font-size:11px;padding:5px 9px;flex-shrink:0">⊞ QR</button>
+        </div>`).join('')}
+    </div>`}
+
+    <div class="sp"></div>
+    <button class="fab" onclick="modalEq(null)">+</button>`;
+}
+
+function modalEq(id) {
+  const eq = id ? S.eq.find(e=>e.id===id) : null;
+  const isN = !eq;
+  const f = eq?{...eq}:{nom:'',type:'mécanique',localisation:'',statut:'en service',dateMAJ:today(),observations:''};
+
+  openModal(`
+    <div class="mh"></div>
+    <div class="mhd">
+      <span class="mt">${isN?'Nouvel équipement':'Modifier équipement'}</span>
+      <button class="mc" onclick="closeModal()">×</button>
+    </div>
+    <div class="mb">
+      ${!isN?`
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+          <div style="background:#fff;padding:8px;border-radius:8px;flex-shrink:0">
+            <img src="${qrUrl(eq,72)}" width="72" height="72" style="display:block"/>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:7px">QR CODE</div>
+            <div style="display:flex;gap:7px">
+              <button class="bq" onclick="closeModal();showQR('${eq.id}')" style="font-size:11px;padding:5px 9px">Agrandir</button>
+              <button class="bs" onclick="printSingleQR('${eq.id}')" style="font-size:11px;padding:5px 9px">🖨</button>
+            </div>
+          </div>
+        </div>
+        <hr class="div">`:''}
+
+      <div class="fi"><label class="fl">Désignation *</label><input class="inp" id="en" value="${esc(f.nom)}" placeholder="Ex: Compresseur GA15"/></div>
+      <div class="g2">
+        <div class="fi"><label class="fl">Type</label><select class="sel" id="et">
+          ${['électrique','mécanique','hydraulique','pneumatique','thermique','autre'].map(t=>`<option ${f.type===t?'selected':''}>${t}</option>`).join('')}
+        </select></div>
+        <div class="fi"><label class="fl">Statut</label><select class="sel" id="es">
+          ${['en service','en panne','en maintenance','hors service'].map(s=>`<option ${f.statut===s?'selected':''}>${s}</option>`).join('')}
+        </select></div>
+      </div>
+      <div class="fi"><label class="fl">Localisation</label><input class="inp" id="el" value="${esc(f.localisation)}" placeholder="Ex: Atelier A"/></div>
+      <div class="fi"><label class="fl">Date MAJ</label><input class="inp" type="date" id="ed" value="${f.dateMAJ||''}"/></div>
+      <div class="fi"><label class="fl">Observations</label><textarea class="ta" id="eo">${esc(f.observations)}</textarea></div>
+      ${!isN?`<button class="bd" onclick="delEq('${eq.id}')">Supprimer cet équipement</button>`:''}
+      <button class="bp" onclick="saveEq('${isN?'':eq.id}')">${isN?'Créer l\'équipement':'Enregistrer'}</button>
+    </div>`);
+}
+
+function saveEq(id) {
+  const nom = document.getElementById('en').value.trim();
+  if (!nom) { alert('Désignation obligatoire'); return; }
+  const d = {nom,type:document.getElementById('et').value,statut:document.getElementById('es').value,localisation:document.getElementById('el').value,dateMAJ:document.getElementById('ed').value,observations:document.getElementById('eo').value};
+  if (id) S.eq=S.eq.map(e=>e.id===id?{...e,...d}:e);
+  else S.eq=[...S.eq,{id:uid(),...d}];
+  saveAll(); closeModal(); render();
+}
+
+function delEq(id) {
+  if (!confirm('Supprimer ?')) return;
+  S.eq=S.eq.filter(e=>e.id!==id); saveAll(); closeModal(); render();
+}
+
+// ═══════════════════════════════════
+// QR
+// ═══════════════════════════════════
+function showQR(eqId) {
+  const eq=S.eq.find(e=>e.id===eqId); if (!eq) return;
+  openModal(`
+    <div class="mh"></div>
+    <div class="mhd"><span class="mt">QR Code</span><button class="mc" onclick="closeModal()">×</button></div>
+    <div class="mb" style="text-align:center">
+      <div style="background:#fff;padding:18px;border-radius:14px;display:inline-block;margin-bottom:16px">
+        <img src="${qrUrl(eq,240)}" width="240" height="240" style="display:block"/>
+      </div>
+      <div style="font-size:17px;font-weight:700;margin-bottom:4px">${esc(eq.nom)}</div>
+      <div style="color:var(--muted);font-size:13px;margin-bottom:10px">📍 ${esc(eq.localisation)}</div>
+      <div style="display:flex;gap:7px;justify-content:center;margin-bottom:16px">${badge(eq.type,C.info)} ${badge(eq.statut,statusCol(eq.statut))}</div>
+      <div style="color:var(--muted);font-size:10px;font-family:monospace;margin-bottom:18px;word-break:break-all">${eq.id}</div>
+      <div style="background:rgba(88,166,255,.08);border:1px solid rgba(88,166,255,.2);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--muted);margin-bottom:16px;text-align:left">
+        💡 Scannez depuis <strong style="color:var(--text)">Machines → 📷 Scanner</strong> pour ouvrir la fiche directement.
+      </div>
+      <button class="bp" onclick="printSingleQR('${eq.id}')">🖨 Imprimer l'étiquette</button>
+      <button class="bs" style="width:100%;margin-top:8px" onclick="closeModal()">Fermer</button>
+    </div>`);
+}
+
+function printSingleQR(eqId) {
+  const eq=S.eq.find(e=>e.id===eqId); if (!eq) return;
+  const w=window.open('','_blank','width=400,height=550');
+  w.document.write(`<!DOCTYPE html><html><head><title>QR</title>
+    <style>body{font-family:Arial,sans-serif;display:flex;flex-direction:column;align-items:center;padding:24px;background:#fff;text-align:center}
+    h2{margin:0 0 4px;font-size:15px}.loc{font-size:11px;color:#666;margin:0 0 14px}
+    img{border:1px solid #eee;border-radius:8px;padding:8px}.tags{display:flex;gap:8px;justify-content:center;margin-top:10px}
+    .tag{background:#f0f0f0;border-radius:4px;padding:3px 10px;font-size:10px;text-transform:uppercase;color:#555}
+    .id{font-size:8px;color:#ccc;font-family:monospace;margin-top:8px;word-break:break-all;max-width:200px}
+    </style></head><body>
+    <h2>${esc(eq.nom)}</h2><p class="loc">📍 ${esc(eq.localisation)}</p>
+    <img src="${qrUrl(eq,200)}" width="200" height="200"/>
+    <div class="tags"><span class="tag">${eq.type}</span><span class="tag">${eq.statut}</span></div>
+    <div class="id">${eq.id}</div>
+    <script>window.onload=function(){window.print()}<\/script>
+    </body></html>`);
+  w.document.close();
+}
+
+function printAllQR() {
+  const cards = S.eq.map(eq=>`
+    <div class="card">
+      <img src="${qrUrl(eq,160)}" width="160" height="160"/>
+      <div class="n">${esc(eq.nom)}</div>
+      <div class="l">📍 ${esc(eq.localisation)}</div>
+      <div class="tags"><span class="tag">${eq.type}</span><span class="tag">${eq.statut}</span></div>
+      <div class="id">${eq.id}</div>
+    </div>`).join('');
+  const w=window.open('','_blank');
+  w.document.write(`<!DOCTYPE html><html><head><title>QR Codes GMAO</title>
+    <style>body{font-family:Arial;padding:20px;background:#fff}
+    h1{font-size:14px;margin:0 0 3px}.meta{font-size:11px;color:#999;margin-bottom:16px}
+    .grid{display:flex;flex-wrap:wrap;gap:12px}
+    .card{border:1.5px solid #e0e0e0;border-radius:10px;padding:14px;text-align:center;width:200px;page-break-inside:avoid}
+    .card img{display:block;margin:0 auto}.n{font-weight:700;font-size:12px;margin-top:9px;line-height:1.3;color:#111}
+    .l{font-size:10px;color:#666;margin-top:2px}.tags{display:flex;gap:5px;justify-content:center;margin-top:5px}
+    .tag{background:#f0f0f0;border-radius:4px;padding:2px 8px;font-size:9px;text-transform:uppercase;color:#666}
+    .id{font-size:8px;color:#ccc;font-family:monospace;margin-top:5px;word-break:break-all}
+    @media print{.card{break-inside:avoid}}</style></head><body>
+    <h1>QR Codes — GMAO</h1>
+    <div class="meta">Imprimé le ${new Date().toLocaleDateString('fr-FR')} · ${S.eq.length} équipement(s)</div>
+    <div class="grid">${cards}</div>
+    <script>window.onload=function(){window.print()}<\/script>
+    </body></html>`);
+  w.document.close();
+}
+
+// ═══════════════════════════════════
+// SCANNER
+// ═══════════════════════════════════
+let scanStream=null, scanRAF=null;
+
+function openScanner() {
+  openModal(`
+    <div class="mh"></div>
+    <div class="mhd"><span class="mt">📷 Scanner QR</span><button class="mc" onclick="closeScanner()">×</button></div>
+    <div class="mb">
+      <div id="scan-st" style="text-align:center;color:var(--muted);font-size:13px;margin-bottom:12px">Démarrage caméra…</div>
+      <div style="position:relative;border-radius:14px;overflow:hidden">
+        <video id="scan-vid" playsinline muted autoplay></video>
+        <canvas id="scan-cv" style="display:none"></canvas>
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">
+          <div style="position:relative;width:190px;height:190px">
+            <div style="position:absolute;inset:0;box-shadow:0 0 0 9999px rgba(0,0,0,.48);border-radius:7px"></div>
+            <div style="position:absolute;inset:0;border:1.5px solid rgba(232,151,10,.35);border-radius:7px"></div>
+            <div style="position:absolute;top:-1px;left:-1px;width:22px;height:22px;border-top:3px solid #e8970a;border-left:3px solid #e8970a;border-radius:4px 0 0 0"></div>
+            <div style="position:absolute;top:-1px;right:-1px;width:22px;height:22px;border-top:3px solid #e8970a;border-right:3px solid #e8970a;border-radius:0 4px 0 0"></div>
+            <div style="position:absolute;bottom:-1px;left:-1px;width:22px;height:22px;border-bottom:3px solid #e8970a;border-left:3px solid #e8970a;border-radius:0 0 0 4px"></div>
+            <div style="position:absolute;bottom:-1px;right:-1px;width:22px;height:22px;border-bottom:3px solid #e8970a;border-right:3px solid #e8970a;border-radius:0 0 4px 0"></div>
+          </div>
+        </div>
+      </div>
+      <div id="scan-res" style="margin-top:14px"></div>
+    </div>`);
+
+  startScanner();
+}
+
+async function startScanner() {
+  const stEl=document.getElementById('scan-st');
+  const vid=document.getElementById('scan-vid');
+  const cv=document.getElementById('scan-cv');
+  if (!vid||!cv) return;
+
+  try {
+    scanStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}}});
+    vid.srcObject=scanStream;
+    await vid.play();
+    if (stEl) stEl.textContent='Pointez vers un QR code GMAO';
+
+    if (!window.jsQR) {
+      await new Promise((res,rej)=>{
+        const s=document.createElement('script');
+        s.src='https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.js';
+        s.onload=res; s.onerror=rej; document.head.appendChild(s);
+      });
+    }
+    scanTick(vid,cv);
+  } catch(e) {
+    if (stEl) stEl.innerHTML=`<span style="color:${C.danger}">⚠ ${e.name==='NotAllowedError'?'Accès caméra refusé':'Caméra non disponible'}</span>`;
+  }
+}
+
+function scanTick(vid,cv) {
+  if (!vid||!cv||!window.jsQR) { scanRAF=requestAnimationFrame(()=>scanTick(vid,cv)); return; }
+  if (vid.readyState>=vid.HAVE_ENOUGH_DATA) {
+    cv.width=vid.videoWidth; cv.height=vid.videoHeight;
+    cv.getContext('2d').drawImage(vid,0,0);
+    const img=cv.getContext('2d').getImageData(0,0,cv.width,cv.height);
+    const code=window.jsQR(img.data,img.width,img.height);
+    if (code) {
+      const eqId=parseQR(code.data);
+      if (eqId) {
+        const eq=S.eq.find(e=>e.id===eqId);
+        if (eq) { stopScanner(); showScanResult(eq); return; }
+      }
+    }
+  }
+  scanRAF=requestAnimationFrame(()=>scanTick(vid,cv));
+}
+
+function stopScanner() {
+  if (scanStream) { scanStream.getTracks().forEach(t=>t.stop()); scanStream=null; }
+  if (scanRAF) { cancelAnimationFrame(scanRAF); scanRAF=null; }
+}
+
+function closeScanner() { stopScanner(); closeModal(); }
+
+function showScanResult(eq) {
+  const r=document.getElementById('scan-res');
+  const s=document.getElementById('scan-st');
+  if (s) s.textContent='';
+  if (r) r.innerHTML=`
+    <div style="background:var(--surface2);border:1px solid var(--border);border-left:3px solid ${C.success};border-radius:12px;padding:16px">
+      <div style="color:${C.success};font-weight:700;margin-bottom:8px">✅ Équipement identifié !</div>
+      <div style="font-size:16px;font-weight:700;margin-bottom:4px">${esc(eq.nom)}</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:10px">📍 ${esc(eq.localisation)}</div>
+      <div style="display:flex;gap:7px;margin-bottom:14px">${badge(eq.type,C.info)} ${badge(eq.statut,statusCol(eq.statut))}</div>
+      <button class="bp" onclick="closeModal();modalEq('${eq.id}')">Ouvrir la fiche</button>
+    </div>`;
+}
+
+// ═══════════════════════════════════
+// ORDRES DE TRAVAUX
+// ═══════════════════════════════════
+function pgOTs() {
+  const q=S.search.ots.toLowerCase(), f=S.otFilter;
+  const list=S.ots.filter(o=>{
+    const eq=S.eq.find(e=>e.id===o.equipementId);
+    return (o.titre.toLowerCase().includes(q)||o.numero?.includes(q)||eq?.nom.toLowerCase().includes(q))&&(f==='all'||o.statut===f);
+  });
+
+  return `
+    <div class="ph">
+      <div><div class="pt">Ordres de Travaux</div><div class="ps">${list.length} OT</div></div>
+    </div>
+    <div class="sc"><input id="ot-search" class="si" placeholder="Rechercher…" value="${esc(S.search.ots)}" oninput="S.search.ots=this.value;render()"/></div>
+    <div class="chips">
+      ${['all','ouvert','en cours','terminé','annulé'].map(s=>
+        `<button class="chip ${S.otFilter===s?'on':''}" onclick="S.otFilter='${s}';render()">${s==='all'?'Tous':s}</button>`).join('')}
+    </div>
+    ${list.length===0?`<div class="empty"><div class="empty-i">🔧</div><div>Aucun OT</div></div>`:`
+    <div class="card">
+      ${list.map(ot=>{
+        const eq=S.eq.find(e=>e.id===ot.equipementId);
+        const late=isOverdue(ot.datePrevue)&&!['terminé','annulé'].includes(ot.statut);
+        return `<div class="ci" onclick="modalOT('${ot.id}')">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">
+              <span class="mono" style="color:var(--accent);font-weight:700">${esc(ot.numero)}</span>
+              ${badge(ot.priorite,prioCol(ot.priorite))}
+              ${late?badge('retard',C.danger):''}
+            </div>
+            <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(ot.titre)}</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:3px">${esc(eq?.nom||'—')} · ${fmt(ot.datePrevue)}</div>
+          </div>
+          <div style="flex-shrink:0;margin-left:8px">${badge(ot.statut,statusCol(ot.statut))}</div>
+        </div>`;
+      }).join('')}
+    </div>`}
+    <div class="sp"></div>
+    <button class="fab" onclick="modalOT(null)">+</button>`;
+}
+
+function modalOT(id) {
+  const ot=id?S.ots.find(o=>o.id===id):null;
+  const isN=!ot;
+  const f=ot?{...ot}:{titre:'',equipementId:'',type:'correctif',priorite:'normale',statut:'ouvert',description:'',dateCreation:today(),datePrevue:'',dateCloture:'',technicien:'',observations:'',numero:nextOT(S.ots)};
+
+  openModal(`
+    <div class="mh"></div>
+    <div class="mhd">
+      <span class="mt">${isN?`Nouvel OT — ${f.numero}`:`Modifier ${f.numero}`}</span>
+      <button class="mc" onclick="closeModal()">×</button>
+    </div>
+    <div class="mb">
+      <div class="fi"><label class="fl">Titre *</label><input class="inp" id="ott" value="${esc(f.titre)}" placeholder="Description de l'intervention"/></div>
+      <div class="fi"><label class="fl">Équipement</label><select class="sel" id="oteq">
+        <option value="">— Sélectionner —</option>
+        ${S.eq.map(e=>`<option value="${e.id}" ${f.equipementId===e.id?'selected':''}>${esc(e.nom)}</option>`).join('')}
+      </select></div>
+      <div class="g2">
+        <div class="fi"><label class="fl">Type</label><select class="sel" id="otty">
+          ${['correctif','préventif','amélioratif','ronde'].map(t=>`<option ${f.type===t?'selected':''}>${t}</option>`).join('')}
+        </select></div>
+        <div class="fi"><label class="fl">Priorité</label><select class="sel" id="otpr">
+          ${['urgent','haute','normale','basse'].map(p=>`<option ${f.priorite===p?'selected':''}>${p}</option>`).join('')}
+        </select></div>
+      </div>
+      <div class="g2">
+        <div class="fi"><label class="fl">Statut</label><select class="sel" id="otst">
+          ${['ouvert','en cours','terminé','annulé'].map(s=>`<option ${f.statut===s?'selected':''}>${s}</option>`).join('')}
+        </select></div>
+        <div class="fi"><label class="fl">Technicien</label><input class="inp" id="ottech" value="${esc(f.technicien)}" placeholder="Prénom Nom"/></div>
+      </div>
+      <div class="g2">
+        <div class="fi"><label class="fl">Date prévue</label><input class="inp" type="date" id="otd" value="${f.datePrevue||''}"/></div>
+        <div class="fi"><label class="fl">Clôture</label><input class="inp" type="date" id="otc" value="${f.dateCloture||''}"/></div>
+      </div>
+      <div class="fi"><label class="fl">Description</label><textarea class="ta" id="otdes">${esc(f.description)}</textarea></div>
+      <div class="fi"><label class="fl">Observations</label><textarea class="ta" id="otob">${esc(f.observations)}</textarea></div>
+      ${!isN?`<button class="bd" onclick="delOT('${ot.id}')">Supprimer cet OT</button>`:''}
+      <button class="bp" onclick="saveOT('${isN?'':ot.id}')">${isN?'Créer l\'OT':'Enregistrer'}</button>
+    </div>`);
+}
+
+function saveOT(id) {
+  const titre=document.getElementById('ott').value.trim();
+  if (!titre) { alert('Titre obligatoire'); return; }
+  const d={titre,equipementId:document.getElementById('oteq').value,type:document.getElementById('otty').value,priorite:document.getElementById('otpr').value,statut:document.getElementById('otst').value,technicien:document.getElementById('ottech').value,datePrevue:document.getElementById('otd').value,dateCloture:document.getElementById('otc').value,description:document.getElementById('otdes').value,observations:document.getElementById('otob').value};
+  if (id) S.ots=S.ots.map(o=>o.id===id?{...o,...d}:o);
+  else S.ots=[...S.ots,{id:uid(),numero:nextOT(S.ots),dateCreation:today(),...d}];
+  saveAll(); closeModal(); render();
+}
+
+function delOT(id) {
+  if (!confirm('Supprimer ?')) return;
+  S.ots=S.ots.filter(o=>o.id!==id); saveAll(); closeModal(); render();
+}
+
+// ═══════════════════════════════════
+// MAINTENANCE PRÉVENTIVE
+// ═══════════════════════════════════
+function pgPreventif() {
+  const q=S.search.prev.toLowerCase();
+  const list=[...S.prev].filter(p=>{
+    const eq=S.eq.find(e=>e.id===p.equipementId);
+    return p.tache.toLowerCase().includes(q)||eq?.nom.toLowerCase().includes(q);
+  }).sort((a,b)=>new Date(a.prochaineEcheance)-new Date(b.prochaineEcheance));
+
+  return `
+    <div class="ph">
+      <div><div class="pt">Plan Préventif</div><div class="ps">${list.length} gamme(s)</div></div>
+    </div>
+    <div class="sc"><input id="pv-search" class="si" placeholder="Rechercher…" value="${esc(S.search.prev)}" oninput="S.search.prev=this.value;render()"/></div>
+    ${list.length===0?`<div class="empty"><div class="empty-i">📅</div><div>Aucune gamme préventive</div></div>`:`
+    <div class="card" style="margin-top:10px">
+      ${list.map(p=>{
+        const eq=S.eq.find(e=>e.id===p.equipementId);
+        const d=daysUntil(p.prochaineEcheance);
+        const col=d===null?C.muted:d<=0?C.danger:d<=7?C.warning:d<=30?C.accent:C.success;
+        return `<div class="ci" onclick="modalPrev('${p.id}')">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.tache)}</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(eq?.nom||'—')}</div>
+            <div style="margin-top:5px">${badge(p.frequence,C.info)}</div>
+          </div>
+          <div style="text-align:right;flex-shrink:0;margin-left:10px">
+            <div style="color:${col};font-family:monospace;font-size:13px;font-weight:700">${fmt(p.prochaineEcheance)}</div>
+            <div style="color:${col};font-size:10px;margin-top:2px">${d===null?'':d<=0?`RETARD ${Math.abs(d)}j`:`J-${d}`}</div>
+            <button class="bs" style="margin-top:7px;font-size:11px;padding:5px 10px" onclick="event.stopPropagation();marquerFait('${p.id}')">✓ Fait</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`}
+    <div class="sp"></div>
+    <button class="fab" onclick="modalPrev(null)">+</button>`;
+}
+
+function marquerFait(id) {
+  const p=S.prev.find(x=>x.id===id); if (!p) return;
+  const d=new Date(); d.setDate(d.getDate()+(FREQ_DAYS[p.frequence]||30));
+  S.prev=S.prev.map(x=>x.id===id?{...x,dernierPassage:today(),prochaineEcheance:d.toISOString().split('T')[0]}:x);
+  saveAll(); render();
+}
+
+function modalPrev(id) {
+  const p=id?S.prev.find(x=>x.id===id):null;
+  const isN=!p;
+  const f=p?{...p}:{equipementId:'',tache:'',frequence:'mensuel',dernierPassage:'',prochaineEcheance:'',technicien:'',observations:''};
+
+  openModal(`
+    <div class="mh"></div>
+    <div class="mhd">
+      <span class="mt">${isN?'Nouvelle gamme':'Modifier gamme'}</span>
+      <button class="mc" onclick="closeModal()">×</button>
+    </div>
+    <div class="mb">
+      <div class="fi"><label class="fl">Tâche *</label><input class="inp" id="ptt" value="${esc(f.tache)}" placeholder="Ex: Vidange huile moteur"/></div>
+      <div class="fi"><label class="fl">Équipement</label><select class="sel" id="peq">
+        <option value="">— Sélectionner —</option>
+        ${S.eq.map(e=>`<option value="${e.id}" ${f.equipementId===e.id?'selected':''}>${esc(e.nom)}</option>`).join('')}
+      </select></div>
+      <div class="g2">
+        <div class="fi"><label class="fl">Fréquence</label><select class="sel" id="pfr">
+          ${['hebdomadaire','mensuel','trimestriel','semestriel','annuel'].map(ff=>`<option ${f.frequence===ff?'selected':''}>${ff}</option>`).join('')}
+        </select></div>
+        <div class="fi"><label class="fl">Technicien</label><input class="inp" id="pte" value="${esc(f.technicien)}" placeholder="Prénom Nom"/></div>
+      </div>
+      <div class="g2">
+        <div class="fi"><label class="fl">Dernier passage</label><input class="inp" type="date" id="pla" value="${f.dernierPassage||''}"/></div>
+        <div class="fi"><label class="fl">Prochaine échéance</label><input class="inp" type="date" id="pne" value="${f.prochaineEcheance||''}"/></div>
+      </div>
+      <div class="fi"><label class="fl">Observations</label><textarea class="ta" id="pob">${esc(f.observations)}</textarea></div>
+      ${!isN?`<button class="bd" onclick="delPrev('${p.id}')">Supprimer cette gamme</button>`:''}
+      <button class="bp" onclick="savePrev('${isN?'':p.id}')">${isN?'Créer la gamme':'Enregistrer'}</button>
+    </div>`);
+}
+
+function savePrev(id) {
+  const tache=document.getElementById('ptt').value.trim();
+  if (!tache) { alert('Tâche obligatoire'); return; }
+  const d={tache,equipementId:document.getElementById('peq').value,frequence:document.getElementById('pfr').value,technicien:document.getElementById('pte').value,dernierPassage:document.getElementById('pla').value,prochaineEcheance:document.getElementById('pne').value,observations:document.getElementById('pob').value};
+  if (id) S.prev=S.prev.map(p=>p.id===id?{...p,...d}:p);
+  else S.prev=[...S.prev,{id:uid(),...d}];
+  saveAll(); closeModal(); render();
+}
+
+function delPrev(id) {
+  if (!confirm('Supprimer ?')) return;
+  S.prev=S.prev.filter(p=>p.id!==id); saveAll(); closeModal(); render();
+}
+
+// ═══════════════════════════════════
+// STOCK
+// ═══════════════════════════════════
+function pgStock() {
+  const q=S.search.stock.toLowerCase();
+  const list=S.stock.filter(s=>s.designation.toLowerCase().includes(q)||s.reference.toLowerCase().includes(q)||(s.categorie||'').toLowerCase().includes(q));
+  const val=S.stock.reduce((a,x)=>a+x.quantite*x.prixUnitaire,0);
+
+  return `
+    <div class="ph">
+      <div>
+        <div class="pt">Stock PDR</div>
+        <div class="ps">${list.length} réf. · <span style="color:var(--accent);font-family:monospace">${val.toFixed(2)} €</span></div>
+      </div>
+    </div>
+    <div class="sc"><input id="st-search" class="si" placeholder="Rechercher…" value="${esc(S.search.stock)}" oninput="S.search.stock=this.value;render()"/></div>
+    ${list.length===0?`<div class="empty"><div class="empty-i">📦</div><div>Aucune pièce en stock</div></div>`:`
+    <div class="card" style="margin-top:10px">
+      ${list.map(s=>{
+        const al=s.quantite<=s.seuilAlerte;
+        return `<div class="ci" onclick="modalSt('${s.id}')">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:7px;margin-bottom:3px;flex-wrap:wrap">
+              <span class="mono" style="color:var(--accent);font-weight:700">${esc(s.reference)}</span>
+              ${s.categorie?badge(s.categorie,C.info):''}
+              ${al?`<span style="color:${C.warning};font-size:14px">⚠</span>`:''}
+            </div>
+            <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.designation)}</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(s.localisation)} · ${esc(s.fournisseur)}</div>
+          </div>
+          <div class="qc" onclick="event.stopPropagation()">
+            <button class="qb" onclick="adjStock('${s.id}',-1)">−</button>
+            <span class="qv" style="color:${al?C.warning:C.success}">${s.quantite}</span>
+            <button class="qb" onclick="adjStock('${s.id}',1)">+</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`}
+    <div class="sp"></div>
+    <button class="fab" onclick="modalSt(null)">+</button>`;
+}
+
+function adjStock(id, delta) {
+  S.stock=S.stock.map(s=>s.id===id?{...s,quantite:Math.max(0,s.quantite+delta)}:s);
+  saveAll(); render();
+}
+
+function modalSt(id) {
+  const s=id?S.stock.find(x=>x.id===id):null;
+  const isN=!s;
+  const f=s?{...s}:{reference:'',designation:'',categorie:'',quantite:0,seuilAlerte:1,localisation:'',fournisseur:'',prixUnitaire:0,observations:''};
+
+  openModal(`
+    <div class="mh"></div>
+    <div class="mhd">
+      <span class="mt">${isN?'Nouvelle pièce':'Modifier pièce'}</span>
+      <button class="mc" onclick="closeModal()">×</button>
+    </div>
+    <div class="mb">
+      <div class="g2">
+        <div class="fi"><label class="fl">Référence</label><input class="inp" id="sr" value="${esc(f.reference)}" placeholder="JT-32X3"/></div>
+        <div class="fi"><label class="fl">Catégorie</label><input class="inp" id="sc" value="${esc(f.categorie)}" placeholder="Joints…"/></div>
+      </div>
+      <div class="fi"><label class="fl">Désignation *</label><input class="inp" id="sd" value="${esc(f.designation)}" placeholder="Nom complet de la pièce"/></div>
+      <div class="g2">
+        <div class="fi"><label class="fl">Fournisseur</label><input class="inp" id="sf" value="${esc(f.fournisseur)}" placeholder="Nom"/></div>
+        <div class="fi"><label class="fl">Localisation</label><input class="inp" id="sl" value="${esc(f.localisation)}" placeholder="Rayon A-12"/></div>
+      </div>
+      <div class="g3">
+        <div class="fi"><label class="fl">Qté</label><input class="inp" type="number" min="0" id="sq" value="${f.quantite}"/></div>
+        <div class="fi"><label class="fl">Seuil min.</label><input class="inp" type="number" min="0" id="ss" value="${f.seuilAlerte}"/></div>
+        <div class="fi"><label class="fl">PU (€)</label><input class="inp" type="number" min="0" step="0.01" id="sp" value="${f.prixUnitaire}"/></div>
+      </div>
+      <div class="fi"><label class="fl">Observations</label><textarea class="ta" id="so">${esc(f.observations)}</textarea></div>
+      ${!isN?`<button class="bd" onclick="delSt('${s.id}')">Supprimer cette pièce</button>`:''}
+      <button class="bp" onclick="saveSt('${isN?'':s.id}')">${isN?'Ajouter au stock':'Enregistrer'}</button>
+    </div>`);
+}
+
+function saveSt(id) {
+  const designation=document.getElementById('sd').value.trim();
+  if (!designation) { alert('Désignation obligatoire'); return; }
+  const d={designation,reference:document.getElementById('sr').value,categorie:document.getElementById('sc').value,fournisseur:document.getElementById('sf').value,localisation:document.getElementById('sl').value,quantite:Number(document.getElementById('sq').value)||0,seuilAlerte:Number(document.getElementById('ss').value)||0,prixUnitaire:Number(document.getElementById('sp').value)||0,observations:document.getElementById('so').value};
+  if (id) S.stock=S.stock.map(s=>s.id===id?{...s,...d}:s);
+  else S.stock=[...S.stock,{id:uid(),...d}];
+  saveAll(); closeModal(); render();
+}
+
+function delSt(id) {
+  if (!confirm('Supprimer ?')) return;
+  S.stock=S.stock.filter(s=>s.id!==id); saveAll(); closeModal(); render();
+}
+
+// ═══════════════════════════════════
+// MODAL SYSTEM
+// ═══════════════════════════════════
+function openModal(html) {
+  closeModal();
+  const o=document.createElement('div');
+  o.className='mo'; o.id='modal-o';
+  o.innerHTML=`<div class="ms">${html}</div>`;
+  o.addEventListener('click',e=>{ if(e.target===o){stopScanner();closeModal();} });
+  document.body.appendChild(o);
+}
+
+function closeModal() {
+  const el=document.getElementById('modal-o');
+  if (el) { stopScanner(); el.remove(); }
+}
+
+// ═══════════════════════════════════
+// BANNER INSTALLATION
+// ═══════════════════════════════════
+function showInstallBanner() {
+  const isStandalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
+  if (isStandalone || sessionStorage.getItem('banner-dismissed')) return;
+
+  const banner = document.createElement('div');
+  banner.id = 'install-tip';
+  banner.innerHTML = `
+    <span>📱</span>
+    <span>Safari → <strong>Partager</strong> → <strong>Sur l'écran d'accueil</strong> pour installer l'app</span>
+    <button onclick="this.parentElement.remove();sessionStorage.setItem('banner-dismissed','1')">×</button>`;
+  document.getElementById('app').insertBefore(banner, document.getElementById('content'));
+}
+
+// ═══════════════════════════════════
+// INIT
+// ═══════════════════════════════════
+render();
+showInstallBanner();
+</script>
+</body>
+</html>
