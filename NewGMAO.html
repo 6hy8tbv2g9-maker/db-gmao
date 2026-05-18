@@ -31,8 +31,9 @@
     #content { flex: 1; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; }
 
     /* NAV BAS */
-    #nav { display: flex; background: var(--surface); border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom); flex-shrink: 0; }
-    .ni { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 9px 4px 8px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 9px; font-family: -apple-system, sans-serif; letter-spacing: 0.02em; position: relative; }
+    #nav { display: flex; background: var(--surface); border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom); flex-shrink: 0; overflow-x: auto; scrollbar-width: none; }
+    #nav::-webkit-scrollbar { display: none; }
+    .ni { flex: 1 0 auto; min-width: 60px; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 9px 4px 8px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 9px; font-family: -apple-system, sans-serif; letter-spacing: 0.02em; position: relative; }
     .ni.on { color: var(--accent); }
     .ni-ic { font-size: 23px; line-height: 1; }
     .nb { position: absolute; top: 5px; right: calc(50% - 16px); background: var(--danger); color: #fff; border-radius: 10px; font-size: 9px; font-weight: 700; padding: 1px 5px; min-width: 16px; text-align: center; }
@@ -192,10 +193,18 @@ const camelToSnake = {
   dateCreation: 'date_creation',
   datePrevue: 'date_prevue',
   dateCloture: 'date_cloture',
+  dateDebut: 'date_debut',
+  dateFin: 'date_fin',
+  dureeH: 'duree_h',
+  coutMO: 'cout_mo',
+  coutPieces: 'cout_pieces',
+  coutTotal: 'cout_total',
   dernierPassage: 'dernier_passage',
   prochaineEcheance: 'prochaine_echeance',
   seuilAlerte: 'seuil_alerte',
   prixUnitaire: 'prix_unitaire',
+  otId: 'ot_id',
+  pieceId: 'piece_id',
 };
 const snakeToCamel = Object.fromEntries(Object.entries(camelToSnake).map(([k,v])=>[v,k]));
 
@@ -213,7 +222,7 @@ const fromDB = (obj) => {
   return out;
 };
 
-const TABLES = { eq: 'equipements', ots: 'ots', prev: 'preventif', stock: 'stock' };
+const TABLES = { eq: 'equipements', ots: 'ots', prev: 'preventif', stock: 'stock', otPieces: 'ot_pieces', settings: 'settings' };
 
 // Chargement initial depuis Supabase
 async function loadFromCloud() {
@@ -292,11 +301,24 @@ const DEMO_STOCK=[
 // ═══════════════════════════════════
 const S = {
   page:'dashboard',
-  eq: [], ots: [], prev: [], stock: [],
+  eq: [], ots: [], prev: [], stock: [], otPieces: [], settings: [],
   search:{eq:'',ots:'',prev:'',stock:''},
   otFilter:'all',
+  statsPeriod: '30',  // jours
   loading: true,
   online: navigator.onLine,
+};
+
+// Helper pour récupérer un setting
+const getSetting = (key, fallback='') => {
+  const s = S.settings.find(x => x.key === key);
+  return s ? s.value : fallback;
+};
+const setSetting = async (key, value) => {
+  let s = S.settings.find(x => x.key === key);
+  if (s) { s.value = value; S.settings = S.settings.map(x => x.id===s.id?s:x); }
+  else { s = { id: 's-' + uid(), key, value }; S.settings = [...S.settings, s]; }
+  await syncSave('settings', s);
 };
 
 // Tracker écritures en cours pour éviter d'écraser une saisie utilisateur
@@ -328,6 +350,8 @@ function saveAll() {
   lsSave('gmao-ot', S.ots);
   lsSave('gmao-prev', S.prev);
   lsSave('gmao-stock', S.stock);
+  lsSave('gmao-otPieces', S.otPieces);
+  lsSave('gmao-settings', S.settings);
 }
 
 // ═══════════════════════════════════
@@ -337,8 +361,10 @@ const TABS=[
   {id:'dashboard',ic:'◈',lb:'Accueil'},
   {id:'equipements',ic:'⚙',lb:'Machines'},
   {id:'ots',ic:'🔧',lb:'OT'},
-  {id:'preventif',ic:'📅',lb:'Préventif'},
+  {id:'preventif',ic:'📅',lb:'Prév.'},
   {id:'stock',ic:'📦',lb:'Stock'},
+  {id:'stats',ic:'📊',lb:'Stats'},
+  {id:'settings',ic:'⚙️',lb:'Régl.'},
 ];
 
 function renderNav() {
@@ -368,7 +394,7 @@ function render() {
   const focusedId = document.activeElement?.id;
   const focusedVal = document.activeElement?.value;
 
-  const fn = {dashboard:pgDashboard,equipements:pgEquipements,ots:pgOTs,preventif:pgPreventif,stock:pgStock};
+  const fn = {dashboard:pgDashboard,equipements:pgEquipements,ots:pgOTs,preventif:pgPreventif,stock:pgStock,stats:pgStats,settings:pgSettings};
   document.getElementById('content').innerHTML = (fn[S.page]||pgDashboard)();
 
   // Restore search focus after re-render
@@ -824,17 +850,216 @@ function stopScanner() {
 function closeScanner() { stopScanner(); closeModal(); }
 
 function showScanResult(eq) {
+  // Stats rapides pour cette machine
+  const otsM = S.ots.filter(o => o.equipementId === eq.id);
+  const otsActifs = otsM.filter(o => !['terminé','annulé'].includes(o.statut)).length;
+  const prevM = S.prev.filter(p => p.equipementId === eq.id);
+  const prevEnRetard = prevM.filter(p => { const d=daysUntil(p.prochaineEcheance); return d!==null && d<=0; }).length;
+  const prevAVenir = prevM.filter(p => { const d=daysUntil(p.prochaineEcheance); return d!==null && d>0 && d<=30; }).length;
+
   const r=document.getElementById('scan-res');
   const s=document.getElementById('scan-st');
   if (s) s.textContent='';
   if (r) r.innerHTML=`
-    <div style="background:var(--surface2);border:1px solid var(--border);border-left:3px solid ${C.success};border-radius:12px;padding:16px">
-      <div style="color:${C.success};font-weight:700;margin-bottom:8px">✅ Équipement identifié !</div>
-      <div style="font-size:16px;font-weight:700;margin-bottom:4px">${esc(eq.nom)}</div>
-      <div style="font-size:13px;color:var(--muted);margin-bottom:10px">📍 ${esc(eq.localisation)}</div>
-      <div style="display:flex;gap:7px;margin-bottom:14px">${badge(eq.type,C.info)} ${badge(eq.statut,statusCol(eq.statut))}</div>
-      <button class="bp" onclick="closeModal();modalEq('${eq.id}')">Ouvrir la fiche</button>
+    <div style="background:var(--surface2);border:1px solid var(--border);border-left:3px solid ${C.success};border-radius:12px;padding:14px">
+      <div style="color:${C.success};font-weight:700;margin-bottom:8px;font-size:13px">✅ Machine identifiée</div>
+      <div style="font-size:17px;font-weight:700;margin-bottom:3px">${esc(eq.nom)}</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">📍 ${esc(eq.localisation)}</div>
+      <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">${badge(eq.type,C.info)} ${badge(eq.statut,statusCol(eq.statut))}</div>
+      ${(otsActifs||prevEnRetard||prevAVenir) ? `
+        <div style="display:flex;gap:8px;font-size:11px;padding:8px 0;border-top:1px solid var(--border);margin-bottom:10px;flex-wrap:wrap">
+          ${otsActifs?`<span style="color:${C.warning}">🔧 ${otsActifs} OT actif(s)</span>`:''}
+          ${prevEnRetard?`<span style="color:${C.danger}">⚠ ${prevEnRetard} prév. en retard</span>`:''}
+          ${prevAVenir?`<span style="color:${C.info}">📅 ${prevAVenir} prév. à venir</span>`:''}
+        </div>` : ''}
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;margin-bottom:8px">Que voulez-vous faire ?</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button onclick="closeModal();quickPanne('${eq.id}')" style="background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.35);color:${C.danger};font-size:13px;font-weight:700;padding:13px 8px;border-radius:10px;cursor:pointer;font-family:-apple-system,sans-serif;text-align:center">
+          🔧<br>Déclarer panne
+        </button>
+        <button onclick="closeModal();quickPreventif('${eq.id}')" style="background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.35);color:${C.success};font-size:13px;font-weight:700;padding:13px 8px;border-radius:10px;cursor:pointer;font-family:-apple-system,sans-serif;text-align:center">
+          ✅<br>Valider préventif
+        </button>
+        <button onclick="closeModal();showHistorique('${eq.id}')" style="background:rgba(88,166,255,.12);border:1px solid rgba(88,166,255,.35);color:${C.info};font-size:13px;font-weight:700;padding:13px 8px;border-radius:10px;cursor:pointer;font-family:-apple-system,sans-serif;text-align:center">
+          📋<br>Historique
+        </button>
+        <button onclick="closeModal();modalEq('${eq.id}')" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:13px 8px;border-radius:10px;cursor:pointer;font-family:-apple-system,sans-serif;text-align:center">
+          ✏️<br>Modifier fiche
+        </button>
+      </div>
     </div>`;
+}
+
+// ═══════════════════════════════════
+// ACTIONS RAPIDES POST-SCAN
+// ═══════════════════════════════════
+function quickPanne(eqId) {
+  const eq = S.eq.find(e=>e.id===eqId); if(!eq) return;
+  const numero = nextOT(S.ots);
+  openModal(`
+    <div class="mh"></div>
+    <div class="mhd"><span class="mt">🔧 Déclarer panne — ${esc(eq.nom)}</span><button class="mc" onclick="closeModal()">×</button></div>
+    <div class="mb">
+      <div style="background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.25);border-radius:10px;padding:10px;margin-bottom:14px;font-size:12px;color:var(--muted)">
+        <strong style="color:${C.danger}">${numero}</strong> · ${esc(eq.nom)} · 📍 ${esc(eq.localisation)}
+      </div>
+      <div class="fi"><label class="fl">Description de la panne *</label><textarea class="ta" id="qp-desc" placeholder="Ex: Fuite huile, bruit anormal, ne démarre pas..." style="min-height:90px"></textarea></div>
+      <div class="g2">
+        <div class="fi"><label class="fl">Priorité</label><select class="sel" id="qp-pri">
+          <option value="urgent" selected>urgent</option>
+          <option value="haute">haute</option>
+          <option value="normale">normale</option>
+        </select></div>
+        <div class="fi"><label class="fl">Technicien</label><input class="inp" id="qp-tech" placeholder="Nom"/></div>
+      </div>
+      <div class="fi"><label class="fl">Mettre la machine en panne ?</label><select class="sel" id="qp-statut">
+        <option value="en panne" selected>Oui · en panne</option>
+        <option value="en service">Non · reste en service</option>
+        <option value="en maintenance">en maintenance</option>
+      </select></div>
+      <button class="bp" onclick="saveQuickPanne('${eqId}','${numero}')">Créer l'OT urgent</button>
+    </div>
+  `);
+}
+
+function saveQuickPanne(eqId, numero) {
+  const desc = document.getElementById('qp-desc').value.trim();
+  if (!desc) { alert('Décrivez la panne'); return; }
+  const newOT = {
+    id: uid(),
+    numero,
+    titre: desc.length>40 ? desc.slice(0,37)+'...' : desc,
+    equipementId: eqId,
+    type: 'correctif',
+    priorite: document.getElementById('qp-pri').value,
+    statut: 'ouvert',
+    description: desc,
+    dateCreation: today(),
+    datePrevue: today(),
+    dateCloture: '',
+    technicien: document.getElementById('qp-tech').value,
+    observations: '',
+  };
+  S.ots = [...S.ots, newOT];
+  syncSave('ots', newOT);
+
+  // Mettre à jour le statut de la machine
+  const newStatut = document.getElementById('qp-statut').value;
+  const eq = S.eq.find(e=>e.id===eqId);
+  if (eq && eq.statut !== newStatut) {
+    const updated = {...eq, statut: newStatut, dateMAJ: today()};
+    S.eq = S.eq.map(e=>e.id===eqId?updated:e);
+    syncSave('eq', updated);
+  }
+  closeModal();
+  showToast(`OT ${numero} créé`, C.success);
+  S.page = 'ots';
+  render();
+}
+
+function quickPreventif(eqId) {
+  const eq = S.eq.find(e=>e.id===eqId); if(!eq) return;
+  const list = S.prev.filter(p => p.equipementId === eqId);
+  if (list.length === 0) {
+    openModal(`
+      <div class="mh"></div>
+      <div class="mhd"><span class="mt">Aucun préventif</span><button class="mc" onclick="closeModal()">×</button></div>
+      <div class="mb">
+        <div style="text-align:center;padding:30px 10px;color:var(--muted)">
+          <div style="font-size:42px;margin-bottom:12px">📅</div>
+          <div>Aucune gamme préventive n'est définie pour cette machine.</div>
+        </div>
+        <button class="bp" onclick="closeModal()">OK</button>
+      </div>
+    `);
+    return;
+  }
+  const rows = list.map(p => {
+    const d = daysUntil(p.prochaineEcheance);
+    const col = d===null ? C.muted : d<=0 ? C.danger : d<=7 ? C.warning : d<=30 ? C.accent : C.success;
+    const lbl = d===null ? '' : d<=0 ? `RETARD ${Math.abs(d)}j` : `J-${d}`;
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:11px 12px;border-bottom:1px solid var(--border)22">
+        <input type="checkbox" id="qpv-${p.id}" style="width:22px;height:22px;accent-color:${C.success};flex-shrink:0"/>
+        <div style="flex:1;min-width:0">
+          <label for="qpv-${p.id}" style="display:block;font-size:14px;font-weight:600;color:var(--text)">${esc(p.tache)}</label>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">${p.frequence} · Dû ${fmt(p.prochaineEcheance)}</div>
+        </div>
+        <div style="color:${col};font-size:10px;font-weight:700;flex-shrink:0">${lbl}</div>
+      </div>`;
+  }).join('');
+  openModal(`
+    <div class="mh"></div>
+    <div class="mhd"><span class="mt">✅ Valider préventif — ${esc(eq.nom)}</span><button class="mc" onclick="closeModal()">×</button></div>
+    <div class="mb">
+      <div style="background:rgba(63,185,80,.06);border:1px solid rgba(63,185,80,.2);border-radius:10px;padding:10px;margin-bottom:14px;font-size:12px;color:var(--muted)">
+        Cochez les gammes terminées · la prochaine échéance sera recalculée automatiquement
+      </div>
+      <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:14px">${rows}</div>
+      <div class="fi"><label class="fl">Technicien</label><input class="inp" id="qpv-tech" placeholder="Nom"/></div>
+      <button class="bp" onclick="saveQuickPreventif('${eqId}')">Valider les gammes cochées</button>
+    </div>
+  `);
+}
+
+function saveQuickPreventif(eqId) {
+  const tech = document.getElementById('qpv-tech').value;
+  const list = S.prev.filter(p => p.equipementId === eqId);
+  let count = 0;
+  list.forEach(p => {
+    const cb = document.getElementById('qpv-'+p.id);
+    if (cb && cb.checked) {
+      const d = new Date(); d.setDate(d.getDate()+(FREQ_DAYS[p.frequence]||30));
+      const updated = {...p, dernierPassage:today(), prochaineEcheance:d.toISOString().split('T')[0]};
+      if (tech) updated.technicien = tech;
+      S.prev = S.prev.map(x=>x.id===p.id?updated:x);
+      syncSave('prev', updated);
+      count++;
+    }
+  });
+  closeModal();
+  if (count) showToast(`${count} gamme(s) validée(s)`, C.success);
+  render();
+}
+
+function showHistorique(eqId) {
+  const eq = S.eq.find(e=>e.id===eqId); if(!eq) return;
+  const otsM = [...S.ots.filter(o=>o.equipementId===eqId)].sort((a,b)=>new Date(b.dateCreation)-new Date(a.dateCreation));
+  const prevM = [...S.prev.filter(p=>p.equipementId===eqId)].sort((a,b)=>new Date(b.dernierPassage||0)-new Date(a.dernierPassage||0));
+
+  const otRows = otsM.length === 0 ? `<div style="padding:14px;color:var(--muted);font-size:13px;text-align:center">Aucun OT</div>` :
+    otsM.slice(0,20).map(ot => `
+      <div style="padding:10px 12px;border-bottom:1px solid var(--border)22">
+        <div style="display:flex;justify-content:space-between;align-items:start;gap:8px;margin-bottom:3px">
+          <div style="font-size:13px;font-weight:600;flex:1">${esc(ot.titre)}</div>
+          ${badge(ot.statut, statusCol(ot.statut))}
+        </div>
+        <div style="font-size:11px;color:var(--muted)">
+          <span class="mono" style="color:${C.accent}">${esc(ot.numero)}</span> · ${ot.type} · ${fmt(ot.dateCreation)}
+          ${ot.dureeH?` · ${ot.dureeH}h`:''}
+          ${ot.coutTotal?` · ${Number(ot.coutTotal).toFixed(2)}€`:''}
+        </div>
+      </div>`).join('');
+
+  const prevRows = prevM.length === 0 ? `<div style="padding:14px;color:var(--muted);font-size:13px;text-align:center">Aucune gamme préventive</div>` :
+    prevM.map(p => `
+      <div style="padding:10px 12px;border-bottom:1px solid var(--border)22">
+        <div style="font-size:13px;font-weight:600;margin-bottom:3px">${esc(p.tache)}</div>
+        <div style="font-size:11px;color:var(--muted)">
+          ${p.frequence} · dernier: ${fmt(p.dernierPassage)} · prochain: ${fmt(p.prochaineEcheance)}
+        </div>
+      </div>`).join('');
+
+  openModal(`
+    <div class="mh"></div>
+    <div class="mhd"><span class="mt">📋 Historique — ${esc(eq.nom)}</span><button class="mc" onclick="closeModal()">×</button></div>
+    <div class="mb">
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;margin-bottom:7px">ORDRES DE TRAVAIL (${otsM.length})</div>
+      <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:16px">${otRows}</div>
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;margin-bottom:7px">PRÉVENTIF (${prevM.length})</div>
+      <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">${prevRows}</div>
+    </div>
+  `);
 }
 
 // ═══════════════════════════════════
@@ -882,7 +1107,23 @@ function pgOTs() {
 function modalOT(id) {
   const ot=id?S.ots.find(o=>o.id===id):null;
   const isN=!ot;
-  const f=ot?{...ot}:{titre:'',equipementId:'',type:'correctif',priorite:'normale',statut:'ouvert',description:'',dateCreation:today(),datePrevue:'',dateCloture:'',technicien:'',observations:'',numero:nextOT(S.ots)};
+  const f=ot?{...ot}:{titre:'',equipementId:'',type:'correctif',priorite:'normale',statut:'ouvert',description:'',dateCreation:today(),datePrevue:'',dateDebut:'',dateFin:'',dateCloture:'',dureeH:0,coutMO:0,coutPieces:0,coutTotal:0,technicien:'',observations:'',numero:nextOT(S.ots)};
+
+  // Pièces déjà consommées sur cet OT
+  const pieces = id ? S.otPieces.filter(p => p.otId === id) : [];
+  const piecesRows = pieces.length === 0 ? '' : pieces.map(p => {
+    const stk = S.stock.find(s => s.id === p.pieceId);
+    return `
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg);border-radius:8px;margin-bottom:6px">
+        <div style="flex:1;font-size:13px">
+          <div style="font-weight:600">${esc(stk?.designation || '(supprimée)')}</div>
+          <div style="font-size:11px;color:var(--muted)">${esc(stk?.reference||'')} · ${p.quantite} × ${Number(p.prixUnitaire).toFixed(2)}€ = <strong style="color:${C.accent}">${(p.quantite*p.prixUnitaire).toFixed(2)}€</strong></div>
+        </div>
+        <button onclick="removeOTPiece('${p.id}','${id}')" style="background:transparent;border:1px solid ${C.danger}44;color:${C.danger};font-size:11px;padding:5px 9px;border-radius:6px;cursor:pointer">✕</button>
+      </div>`;
+  }).join('');
+
+  const tarifH = Number(getSetting('tarif_horaire', '45')) || 45;
 
   openModal(`
     <div class="mh"></div>
@@ -914,6 +1155,26 @@ function modalOT(id) {
         <div class="fi"><label class="fl">Date prévue</label><input class="inp" type="date" id="otd" value="${f.datePrevue||''}"/></div>
         <div class="fi"><label class="fl">Clôture</label><input class="inp" type="date" id="otc" value="${f.dateCloture||''}"/></div>
       </div>
+
+      <hr style="border:none;border-top:1px solid var(--border);margin:14px 0">
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;margin-bottom:10px">⏱ INTERVENTION</div>
+      <div class="g2">
+        <div class="fi"><label class="fl">Début</label><input class="inp" type="date" id="otdd" value="${f.dateDebut||''}"/></div>
+        <div class="fi"><label class="fl">Fin</label><input class="inp" type="date" id="otdf" value="${f.dateFin||''}"/></div>
+      </div>
+      <div class="fi"><label class="fl">Durée (heures)</label><input class="inp" type="number" min="0" step="0.25" id="otdh" value="${f.dureeH||0}" oninput="updateCoutMO()"/></div>
+      <div class="fi"><label class="fl">Coût main d'œuvre (auto à ${tarifH}€/h)</label><input class="inp" type="number" min="0" step="0.01" id="otcmo" value="${f.coutMO||0}" readonly style="opacity:.7"/></div>
+
+      ${!isN ? `
+        <hr style="border:none;border-top:1px solid var(--border);margin:14px 0">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;margin-bottom:10px">📦 PIÈCES CONSOMMÉES</div>
+        <div id="ot-pieces-list">${piecesRows || `<div style="font-size:12px;color:var(--muted);padding:8px 0">Aucune pièce</div>`}</div>
+        <button onclick="openAddPiece('${id}')" style="background:rgba(232,151,10,.12);border:1px solid rgba(232,151,10,.35);color:${C.accent};font-size:13px;font-weight:700;padding:9px;border-radius:8px;cursor:pointer;width:100%;margin-top:8px;font-family:-apple-system,sans-serif">+ Ajouter une pièce</button>
+        <div class="fi" style="margin-top:14px"><label class="fl">Coût pièces (auto)</label><input class="inp" type="number" id="otcp" value="${(pieces.reduce((s,p)=>s+p.quantite*p.prixUnitaire,0)).toFixed(2)}" readonly style="opacity:.7"/></div>
+        <div class="fi"><label class="fl" style="color:${C.accent}">💰 COÛT TOTAL OT</label><input class="inp" type="number" id="otct" value="${(Number(f.coutMO||0)+pieces.reduce((s,p)=>s+p.quantite*p.prixUnitaire,0)).toFixed(2)}" readonly style="opacity:.7;color:${C.accent};font-weight:700;font-size:16px"/></div>
+      ` : `<div style="font-size:11px;color:var(--muted);font-style:italic;margin:12px 0;padding:10px;background:var(--bg);border-radius:8px">💡 Enregistrez d'abord l'OT pour pouvoir y ajouter des pièces.</div>`}
+
+      <hr style="border:none;border-top:1px solid var(--border);margin:14px 0">
       <div class="fi"><label class="fl">Description</label><textarea class="ta" id="otdes">${esc(f.description)}</textarea></div>
       <div class="fi"><label class="fl">Observations</label><textarea class="ta" id="otob">${esc(f.observations)}</textarea></div>
       ${!isN?`<button class="bd" onclick="delOT('${ot.id}')">Supprimer cet OT</button>`:''}
@@ -921,14 +1182,105 @@ function modalOT(id) {
     </div>`);
 }
 
+// Recalcule le coût MO en temps réel
+function updateCoutMO() {
+  const tarifH = Number(getSetting('tarif_horaire', '45')) || 45;
+  const duree = Number(document.getElementById('otdh').value) || 0;
+  const cmo = (duree * tarifH).toFixed(2);
+  const elMO = document.getElementById('otcmo');
+  if (elMO) elMO.value = cmo;
+  const elCP = document.getElementById('otcp');
+  const cp = elCP ? Number(elCP.value)||0 : 0;
+  const elCT = document.getElementById('otct');
+  if (elCT) elCT.value = (Number(cmo) + cp).toFixed(2);
+}
+
 function saveOT(id) {
   const titre=document.getElementById('ott').value.trim();
   if (!titre) { alert('Titre obligatoire'); return; }
-  const d={titre,equipementId:document.getElementById('oteq').value,type:document.getElementById('otty').value,priorite:document.getElementById('otpr').value,statut:document.getElementById('otst').value,technicien:document.getElementById('ottech').value,datePrevue:document.getElementById('otd').value,dateCloture:document.getElementById('otc').value,description:document.getElementById('otdes').value,observations:document.getElementById('otob').value};
+  const dureeH = Number(document.getElementById('otdh')?.value)||0;
+  const coutMO = Number(document.getElementById('otcmo')?.value)||0;
+  const coutPieces = Number(document.getElementById('otcp')?.value)||0;
+  const coutTotal = coutMO + coutPieces;
+  const d={titre,equipementId:document.getElementById('oteq').value,type:document.getElementById('otty').value,priorite:document.getElementById('otpr').value,statut:document.getElementById('otst').value,technicien:document.getElementById('ottech').value,datePrevue:document.getElementById('otd').value,dateCloture:document.getElementById('otc').value,dateDebut:document.getElementById('otdd')?.value||'',dateFin:document.getElementById('otdf')?.value||'',dureeH,coutMO,coutPieces,coutTotal,description:document.getElementById('otdes').value,observations:document.getElementById('otob').value};
   const row = id ? {...S.ots.find(o=>o.id===id), ...d} : {id:uid(), numero:nextOT(S.ots), dateCreation:today(), ...d};
   if (id) S.ots=S.ots.map(o=>o.id===id?row:o);
   else S.ots=[...S.ots, row];
   syncSave('ots', row); closeModal(); render();
+}
+
+// ═══════════════════════════════════
+// PIÈCES CONSOMMÉES sur OT
+// ═══════════════════════════════════
+function openAddPiece(otId) {
+  const stocks = S.stock.filter(s => s.quantite > 0);
+  if (stocks.length === 0) { alert('Aucune pièce disponible en stock'); return; }
+  openModal(`
+    <div class="mh"></div>
+    <div class="mhd"><span class="mt">+ Ajouter une pièce</span><button class="mc" onclick="closeModal();modalOT('${otId}')">×</button></div>
+    <div class="mb">
+      <div class="fi"><label class="fl">Pièce *</label><select class="sel" id="ap-id" onchange="updateAPInfo()">
+        <option value="">— Sélectionner —</option>
+        ${stocks.map(s => `<option value="${s.id}">${esc(s.designation)} (${s.reference}) · stock: ${s.quantite}</option>`).join('')}
+      </select></div>
+      <div class="g2">
+        <div class="fi"><label class="fl">Quantité</label><input class="inp" type="number" min="0.01" step="0.01" id="ap-qte" value="1"/></div>
+        <div class="fi"><label class="fl">Prix unit. (€)</label><input class="inp" type="number" min="0" step="0.01" id="ap-pu" value="0"/></div>
+      </div>
+      <div id="ap-warn" style="font-size:11px;color:var(--muted);margin-bottom:10px"></div>
+      <button class="bp" onclick="saveOTPiece('${otId}')">Ajouter au OT</button>
+      <button class="bs" style="width:100%;margin-top:8px" onclick="closeModal();modalOT('${otId}')">Annuler</button>
+    </div>
+  `);
+}
+
+function updateAPInfo() {
+  const id = document.getElementById('ap-id').value;
+  const s = S.stock.find(x => x.id === id);
+  if (s) {
+    document.getElementById('ap-pu').value = Number(s.prixUnitaire||0).toFixed(2);
+    document.getElementById('ap-warn').innerHTML = `Stock dispo : <strong style="color:${C.success}">${s.quantite}</strong>`;
+  }
+}
+
+function saveOTPiece(otId) {
+  const pieceId = document.getElementById('ap-id').value;
+  if (!pieceId) { alert('Sélectionnez une pièce'); return; }
+  const qte = Number(document.getElementById('ap-qte').value)||0;
+  const pu = Number(document.getElementById('ap-pu').value)||0;
+  if (qte <= 0) { alert('Quantité invalide'); return; }
+  const stk = S.stock.find(s=>s.id===pieceId);
+  if (!stk) return;
+  if (qte > stk.quantite) {
+    if (!confirm(`Stock insuffisant (${stk.quantite} dispo). Continuer quand même ?`)) return;
+  }
+  // Créer la liaison
+  const row = { id: uid(), otId, pieceId, quantite: qte, prixUnitaire: pu };
+  S.otPieces = [...S.otPieces, row];
+  syncSave('otPieces', row);
+  // Décrémenter le stock
+  const newStk = {...stk, quantite: Math.max(0, stk.quantite - qte)};
+  S.stock = S.stock.map(s=>s.id===pieceId?newStk:s);
+  syncSave('stock', newStk);
+  closeModal();
+  modalOT(otId); // Rouvrir l'OT avec la pièce ajoutée
+}
+
+function removeOTPiece(linkId, otId) {
+  if (!confirm('Retirer cette pièce ? (le stock sera rétabli)')) return;
+  const link = S.otPieces.find(p=>p.id===linkId);
+  if (!link) return;
+  // Restituer au stock
+  const stk = S.stock.find(s=>s.id===link.pieceId);
+  if (stk) {
+    const newStk = {...stk, quantite: stk.quantite + link.quantite};
+    S.stock = S.stock.map(s=>s.id===link.pieceId?newStk:s);
+    syncSave('stock', newStk);
+  }
+  S.otPieces = S.otPieces.filter(p=>p.id!==linkId);
+  syncDelete('otPieces', linkId);
+  closeModal();
+  modalOT(otId);
 }
 
 function delOT(id) {
@@ -1148,6 +1500,324 @@ function closeModal() {
 }
 
 // ═══════════════════════════════════
+// STATISTIQUES
+// ═══════════════════════════════════
+function pgStats() {
+  const period = Number(S.statsPeriod);
+  const now = new Date();
+  const cutoff = period > 0 ? new Date(now.getTime() - period*86400000) : new Date(0);
+
+  const otsInPeriod = S.ots.filter(o => {
+    if (!o.dateCreation) return false;
+    return new Date(o.dateCreation) >= cutoff;
+  });
+  const otsTermines = otsInPeriod.filter(o => o.statut === 'terminé');
+  const otsCorrectifs = otsInPeriod.filter(o => o.type === 'correctif');
+  const otsPreventifs = otsInPeriod.filter(o => o.type === 'préventif');
+
+  const dispo = S.eq.length === 0 ? 100 : Math.round((S.eq.filter(e => e.statut === 'en service').length / S.eq.length) * 100);
+  const coutTotal = otsInPeriod.reduce((s, o) => s + (Number(o.coutTotal)||0), 0);
+  const dureeTotal = otsTermines.reduce((s, o) => s + (Number(o.dureeH)||0), 0);
+  const mttr = otsTermines.length > 0 ? (dureeTotal / otsTermines.length).toFixed(1) : 0;
+
+  const pannesParMachine = {};
+  otsCorrectifs.forEach(o => {
+    if (!pannesParMachine[o.equipementId]) pannesParMachine[o.equipementId] = [];
+    if (o.dateCreation) pannesParMachine[o.equipementId].push(new Date(o.dateCreation));
+  });
+  let totalGap = 0, gapCount = 0;
+  Object.values(pannesParMachine).forEach(dates => {
+    if (dates.length < 2) return;
+    dates.sort((a,b)=>a-b);
+    for (let i=1; i<dates.length; i++) {
+      totalGap += (dates[i] - dates[i-1]) / 86400000;
+      gapCount++;
+    }
+  });
+  const mtbf = gapCount > 0 ? Math.round(totalGap / gapCount) : '—';
+
+  const pannesCount = {};
+  otsCorrectifs.forEach(o => {
+    pannesCount[o.equipementId] = (pannesCount[o.equipementId]||0) + 1;
+  });
+  const topMachines = Object.entries(pannesCount)
+    .map(([id, n]) => ({ eq: S.eq.find(e=>e.id===id), n }))
+    .filter(x => x.eq)
+    .sort((a,b) => b.n - a.n)
+    .slice(0, 5);
+
+  const moisLabels = [];
+  const moisData = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const fin = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+    moisLabels.push(d.toLocaleDateString('fr-FR', { month: 'short' }));
+    moisData.push(S.ots.filter(o => {
+      if (!o.dateCreation) return false;
+      const od = new Date(o.dateCreation);
+      return od >= d && od < fin;
+    }).length);
+  }
+  const maxMois = Math.max(...moisData, 1);
+
+  const techCount = {};
+  otsInPeriod.forEach(o => {
+    const t = (o.technicien||'').trim() || '(non assigné)';
+    if (!techCount[t]) techCount[t] = { total:0, termines:0, heures:0 };
+    techCount[t].total++;
+    if (o.statut === 'terminé') techCount[t].termines++;
+    techCount[t].heures += Number(o.dureeH)||0;
+  });
+  const techRows = Object.entries(techCount).sort((a,b)=>b[1].total-a[1].total).slice(0,6);
+
+  const prevEnRetard = S.prev.filter(p => { const d=daysUntil(p.prochaineEcheance); return d!==null && d<=0; }).length;
+  const tauxPrev = S.prev.length === 0 ? 100 : Math.round(((S.prev.length - prevEnRetard) / S.prev.length) * 100);
+
+  const piecesCount = {};
+  S.otPieces.forEach(p => {
+    if (!piecesCount[p.pieceId]) piecesCount[p.pieceId] = 0;
+    piecesCount[p.pieceId] += Number(p.quantite)||0;
+  });
+  const topPieces = Object.entries(piecesCount)
+    .map(([id, n]) => ({ s: S.stock.find(x=>x.id===id), n }))
+    .filter(x => x.s)
+    .sort((a,b)=>b.n-a.n)
+    .slice(0, 5);
+
+  const stockValue = S.stock.reduce((s, x) => s + x.quantite * (x.prixUnitaire||0), 0);
+  const stockAlt = S.stock.filter(s => s.quantite <= s.seuilAlerte).length;
+
+  const total = otsInPeriod.length || 1;
+  const pctCorr = Math.round((otsCorrectifs.length / total) * 100);
+  const pctPrev = Math.round((otsPreventifs.length / total) * 100);
+  const pctAutre = 100 - pctCorr - pctPrev;
+
+  const KPI = (val, lbl, sub, col) => `
+    <div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${col};border-radius:12px;padding:12px 14px">
+      <div style="font-size:26px;font-weight:700;color:${col};line-height:1;font-family:Rajdhani,sans-serif">${val}</div>
+      <div style="font-size:12px;font-weight:600;margin-top:5px">${lbl}</div>
+      ${sub?`<div style="font-size:10px;color:var(--muted);margin-top:2px">${sub}</div>`:''}
+    </div>`;
+
+  return `
+    <div class="ph">
+      <div>
+        <div class="pt">Statistiques</div>
+        <div class="ps">${otsInPeriod.length} OT · ${S.eq.length} machine(s)</div>
+      </div>
+    </div>
+
+    <div class="chips">
+      ${[['7','7 jours'],['30','30 jours'],['90','3 mois'],['365','12 mois'],['0','Tout']].map(([v,l]) =>
+        `<button class="chip ${S.statsPeriod===v?'on':''}" onclick="S.statsPeriod='${v}';render()">${l}</button>`
+      ).join('')}
+    </div>
+
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:14px 14px 8px">VUE D'ENSEMBLE</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0 14px">
+      ${KPI(dispo+'%', 'Disponibilité parc', S.eq.filter(e=>e.statut==='en panne').length+' en panne', dispo>=90?C.success:dispo>=75?C.warning:C.danger)}
+      ${KPI(coutTotal.toFixed(0)+'€', 'Coût total période', 'MO + pièces', C.accent)}
+      ${KPI(mttr+'h', 'MTTR moyen', 'Durée moy. réparation', C.info)}
+      ${KPI(mtbf==='—'?'—':mtbf+'j', 'MTBF moyen', 'Entre pannes', C.success)}
+    </div>
+
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">RÉPARTITION DES OT</div>
+    <div class="card" style="padding:14px">
+      <div style="display:flex;height:24px;border-radius:12px;overflow:hidden;margin-bottom:10px;background:var(--bg)">
+        <div style="background:${C.danger};width:${pctCorr}%"></div>
+        <div style="background:${C.success};width:${pctPrev}%"></div>
+        <div style="background:${C.muted};width:${pctAutre}%"></div>
+      </div>
+      <div style="display:flex;gap:14px;font-size:11px;flex-wrap:wrap">
+        <span><span style="color:${C.danger}">●</span> Correctif ${pctCorr}% (${otsCorrectifs.length})</span>
+        <span><span style="color:${C.success}">●</span> Préventif ${pctPrev}% (${otsPreventifs.length})</span>
+        <span><span style="color:${C.muted}">●</span> Autre ${pctAutre}%</span>
+      </div>
+    </div>
+
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">OT PAR MOIS (12 derniers)</div>
+    <div class="card" style="padding:14px">
+      <div style="display:flex;align-items:flex-end;gap:4px;height:120px">
+        ${moisData.map((v,i) => `
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">
+            <div style="font-size:9px;color:var(--muted);height:11px">${v||''}</div>
+            <div style="width:100%;background:${v>0?C.accent:'var(--border)'};height:${(v/maxMois)*90}px;min-height:2px;border-radius:3px 3px 0 0"></div>
+            <div style="font-size:9px;color:var(--muted)">${moisLabels[i]}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
+    ${topMachines.length > 0 ? `
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">⚠ TOP MACHINES PROBLÉMATIQUES</div>
+      <div class="card">
+        ${topMachines.map(({eq, n}, i) => `
+          <div class="ci" onclick="modalEq('${eq.id}')" style="border-bottom:1px solid var(--border)22">
+            <div style="width:28px;height:28px;background:${i===0?C.danger:i===1?'#ff9580':C.warning}33;color:${i===0?C.danger:i===1?'#ff9580':C.warning};border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0">${i+1}</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(eq.nom)}</div>
+              <div style="font-size:11px;color:var(--muted)">📍 ${esc(eq.localisation)}</div>
+            </div>
+            <div style="text-align:right;flex-shrink:0">
+              <div style="color:${C.danger};font-weight:700;font-size:16px">${n}</div>
+              <div style="font-size:10px;color:var(--muted)">panne(s)</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    ` : ''}
+
+    ${techRows.length > 0 ? `
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">👷 CHARGE PAR TECHNICIEN</div>
+      <div class="card">
+        ${techRows.map(([t, d]) => `
+          <div style="padding:11px 14px;border-bottom:1px solid var(--border)22">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+              <div style="font-size:13px;font-weight:600">${esc(t)}</div>
+              <div style="font-size:12px;color:var(--muted)">${d.total} OT · ${d.heures.toFixed(1)}h</div>
+            </div>
+            <div style="height:5px;background:var(--bg);border-radius:3px;overflow:hidden">
+              <div style="height:100%;background:${C.success};width:${d.total>0?(d.termines/d.total)*100:0}%"></div>
+            </div>
+            <div style="font-size:10px;color:var(--muted);margin-top:3px">${d.termines}/${d.total} terminés</div>
+          </div>
+        `).join('')}
+      </div>
+    ` : ''}
+
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">📅 PRÉVENTIF</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0 14px">
+      ${KPI(tauxPrev+'%', 'Taux à temps', S.prev.length+' gammes', tauxPrev>=90?C.success:tauxPrev>=70?C.warning:C.danger)}
+      ${KPI(prevEnRetard, 'En retard', prevEnRetard?'À traiter':'Tout bon !', prevEnRetard?C.danger:C.success)}
+    </div>
+
+    ${topPieces.length > 0 ? `
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">📦 PIÈCES LES PLUS CONSOMMÉES</div>
+      <div class="card">
+        ${topPieces.map(({s, n}) => `
+          <div class="ci">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.designation)}</div>
+              <div style="font-size:11px;color:var(--muted)">${esc(s.reference||'')} · stock : ${s.quantite}</div>
+            </div>
+            <div style="text-align:right;flex-shrink:0">
+              <div style="color:${C.accent};font-weight:700;font-size:16px">${n}</div>
+              <div style="font-size:10px;color:var(--muted)">consommée(s)</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    ` : ''}
+
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">💰 VALEUR STOCK</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0 14px">
+      ${KPI(stockValue.toFixed(0)+'€', 'Valeur totale', S.stock.length+' références', C.accent)}
+      ${KPI(stockAlt, 'Alertes stock', stockAlt?'Réappro nécessaire':'OK', stockAlt?C.warning:C.success)}
+    </div>
+
+    <div class="sp"></div>
+  `;
+}
+
+// ═══════════════════════════════════
+// RÉGLAGES
+// ═══════════════════════════════════
+function pgSettings() {
+  const tarifH = getSetting('tarif_horaire', '45');
+  const cloudStatus = cloudEnabled && S.online ? 'connecté' : 'déconnecté';
+  const statusCol2 = cloudEnabled && S.online ? C.success : C.warning;
+
+  return `
+    <div class="ph">
+      <div><div class="pt">Réglages</div><div class="ps">Paramètres de l'application</div></div>
+    </div>
+
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:14px 14px 8px">⚙️ PARAMÈTRES GÉNÉRAUX</div>
+    <div class="card" style="padding:14px">
+      <div class="fi">
+        <label class="fl">Tarif horaire main d'œuvre (€/h)</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input class="inp" type="number" min="0" step="0.5" id="set-tarif" value="${esc(tarifH)}" style="flex:1"/>
+          <button class="bs" onclick="saveTarif()" style="padding:10px 14px">Enregistrer</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px">Utilisé pour calculer automatiquement le coût main d'œuvre des OT</div>
+      </div>
+    </div>
+
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">☁️ SYNCHRONISATION</div>
+    <div class="card">
+      <div style="padding:14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)22">
+        <div>
+          <div style="font-size:13px;font-weight:600">État du cloud</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">Synchro entre appareils</div>
+        </div>
+        <span style="color:${statusCol2};font-weight:700">●  ${cloudStatus}</span>
+      </div>
+      <div style="padding:14px;display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-size:13px;font-weight:600">Forcer synchronisation</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">Recharger depuis le cloud</div>
+        </div>
+        <button class="bs" onclick="initApp();showToast('Synchronisation…', '#58a6ff')">Recharger</button>
+      </div>
+    </div>
+
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">📊 DONNÉES</div>
+    <div class="card">
+      <div style="padding:14px;border-bottom:1px solid var(--border)22">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;font-size:12px">
+          <div><strong style="color:var(--text);font-size:18px;font-family:Rajdhani,sans-serif">${S.eq.length}</strong><br><span style="color:var(--muted)">Équipements</span></div>
+          <div><strong style="color:var(--text);font-size:18px;font-family:Rajdhani,sans-serif">${S.ots.length}</strong><br><span style="color:var(--muted)">Ordres de travail</span></div>
+          <div><strong style="color:var(--text);font-size:18px;font-family:Rajdhani,sans-serif">${S.prev.length}</strong><br><span style="color:var(--muted)">Gammes préventives</span></div>
+          <div><strong style="color:var(--text);font-size:18px;font-family:Rajdhani,sans-serif">${S.stock.length}</strong><br><span style="color:var(--muted)">Pièces stock</span></div>
+        </div>
+      </div>
+      <div style="padding:14px">
+        <button class="bs" onclick="exportData()" style="width:100%">📥 Exporter toutes les données (JSON)</button>
+      </div>
+    </div>
+
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">ℹ️ À PROPOS</div>
+    <div class="card" style="padding:14px;font-size:12px;color:var(--muted);line-height:1.6">
+      <div>GMAO PWA v2.0</div>
+      <div>Synchronisation cloud via Supabase</div>
+      <div style="margin-top:8px">Pour installer sur un autre appareil :</div>
+      <div style="font-family:monospace;font-size:11px;color:var(--accent);margin-top:5px;word-break:break-all">6hy8tbv2g9-maker.github.io/db-gmao/NewGMAO.html</div>
+    </div>
+
+    <div class="sp"></div>
+  `;
+}
+
+async function saveTarif() {
+  const v = document.getElementById('set-tarif').value;
+  await setSetting('tarif_horaire', v);
+  showToast('Tarif enregistré', C.success);
+}
+
+function exportData() {
+  const data = {
+    exportedAt: new Date().toISOString(),
+    equipements: S.eq,
+    ots: S.ots,
+    preventif: S.prev,
+    stock: S.stock,
+    otPieces: S.otPieces,
+    settings: S.settings,
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `gmao-export-${today()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('Export téléchargé', C.success);
+}
+
+// ═══════════════════════════════════
 // BANNER INSTALLATION
 // ═══════════════════════════════════
 function showInstallBanner() {
@@ -1205,6 +1875,7 @@ async function initApp() {
     if (cloudEnabled && navigator.onLine) {
       const data = await loadFromCloud();
       S.eq = data.eq; S.ots = data.ots; S.prev = data.prev; S.stock = data.stock;
+      S.otPieces = data.otPieces || []; S.settings = data.settings || [];
       saveAll();
       S.loading = false;
       subscribeAll();
@@ -1214,6 +1885,8 @@ async function initApp() {
       S.ots = lsLoad('gmao-ot', []);
       S.prev = lsLoad('gmao-prev', []);
       S.stock = lsLoad('gmao-stock', []);
+      S.otPieces = lsLoad('gmao-otPieces', []);
+      S.settings = lsLoad('gmao-settings', [{id:'s-tarif',key:'tarif_horaire',value:'45'}]);
       S.loading = false;
       if (!cloudEnabled) showToast('Mode local (cloud indisponible)', '#d29922');
       else showToast('Hors ligne · mode local', '#d29922');
@@ -1224,6 +1897,8 @@ async function initApp() {
     S.ots = lsLoad('gmao-ot', []);
     S.prev = lsLoad('gmao-prev', []);
     S.stock = lsLoad('gmao-stock', []);
+    S.otPieces = lsLoad('gmao-otPieces', []);
+    S.settings = lsLoad('gmao-settings', [{id:'s-tarif',key:'tarif_horaire',value:'45'}]);
     S.loading = false;
     showToast('Erreur · cache local', '#f85149');
   }
