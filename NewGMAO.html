@@ -15,6 +15,7 @@
 
   <title>GMAO</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
   <style>
     :root {
       --bg: #0d1117; --surface: #161b22; --surface2: #1c2128;
@@ -716,33 +717,33 @@ async function startScanner() {
   const cv=document.getElementById('scan-cv');
   if (!vid||!cv) return;
 
-  // 1. Charger jsQR EN PARALLÈLE (non-bloquant pour la caméra)
+  // jsQR doit déjà être chargé via le <script> du head
+  // Si jamais il manque, on essaie de le charger
   if (!window.jsQR) {
     const s=document.createElement('script');
-    s.src='https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.js';
+    s.src='https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';
     document.head.appendChild(s);
   }
 
-  // 2. Vérifier que l'API caméra existe
+  // Vérifier que l'API caméra existe
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     if (stEl) stEl.innerHTML=`<span style="color:${C.danger}">⚠ API caméra non disponible sur ce navigateur</span>`;
     return;
   }
 
-  // 3. Demander la caméra (sans bloquer sur les contraintes idéales)
+  // Demander la caméra
   try {
     scanStream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'environment' },
       audio: false
     });
   } catch(e1) {
-    // Fallback : caméra avant ou n'importe quelle caméra
     try {
       scanStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     } catch(e2) {
       if (stEl) {
         if (e2.name === 'NotAllowedError') {
-          stEl.innerHTML = `<span style="color:${C.danger}">⚠ Accès caméra refusé. Allez dans Réglages iPhone → GMAO → Caméra pour autoriser.</span>`;
+          stEl.innerHTML = `<span style="color:${C.danger}">⚠ Accès caméra refusé. Réglages iPhone → GMAO → Caméra.</span>`;
         } else if (e2.name === 'NotFoundError') {
           stEl.innerHTML = `<span style="color:${C.danger}">⚠ Aucune caméra détectée</span>`;
         } else {
@@ -753,7 +754,7 @@ async function startScanner() {
     }
   }
 
-  // 4. Brancher le flux vidéo
+  // Brancher le flux vidéo
   try {
     vid.srcObject = scanStream;
     vid.setAttribute('playsinline', 'true');
@@ -766,7 +767,6 @@ async function startScanner() {
     return;
   }
 
-  // 5. Lancer la boucle de détection (attend jsQR s'il n'est pas encore chargé)
   scanTick(vid, cv);
 }
 
