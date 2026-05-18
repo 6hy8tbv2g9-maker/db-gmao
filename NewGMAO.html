@@ -234,13 +234,18 @@ const TABLES = { eq: 'equipements', ots: 'ots', prev: 'preventif', stock: 'stock
 // Chargement initial depuis Supabase
 async function loadFromCloud() {
   if (!cloudEnabled) throw new Error('Cloud désactivé');
-  const results = {};
-  for (const [key, table] of Object.entries(TABLES)) {
-    const { data, error } = await sb.from(table).select('*');
-    if (error) { console.error(`Load ${table}:`, error); results[key] = []; }
-    else results[key] = (data || []).map(fromDB);
-  }
-  return results;
+  const load = async (table) => {
+    try {
+      const { data, error } = await sb.from(table).select('*');
+      if (error) { console.warn(`Load ${table}:`, error.message); return []; }
+      return (data || []).map(fromDB);
+    } catch(e) { console.warn(`Load ${table} exception:`, e); return []; }
+  };
+  const [eq, ots, prev, stock, otPieces, settings, docs] = await Promise.all([
+    load('equipements'), load('ots'), load('preventif'), load('stock'),
+    load('ot_pieces'), load('settings'), load('documents'),
+  ]);
+  return { eq, ots, prev, stock, otPieces, settings, docs };
 }
 
 // Upsert (création ou mise à jour) d'une ligne
