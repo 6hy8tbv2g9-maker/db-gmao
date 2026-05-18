@@ -263,19 +263,27 @@ async function deleteRow(tableKey, id) {
 }
 
 // Subscribe temps réel : écoute les changements sur toutes les tables
+let realtimeChannels = [];
 function subscribeAll() {
   if (!cloudEnabled) return;
-  for (const [key, table] of Object.entries(TABLES)) {
-    sb.channel(`rt-${table}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table }, async () => {
-        const { data } = await sb.from(table).select('*');
-        if (data) {
-          S[key] = data.map(fromDB);
-          render();
-        }
-      })
-      .subscribe();
-  }
+  // Nettoyer les canaux existants
+  realtimeChannels.forEach(ch => { try { sb.removeChannel(ch); } catch(e) {} });
+  realtimeChannels = [];
+  const tables = ['equipements', 'ots', 'preventif', 'stock', 'ot_pieces', 'settings', 'documents'];
+  const keys =   ['eq',          'ots', 'prev',       'stock', 'otPieces',  'settings', 'docs'];
+  tables.forEach((table, i) => {
+    try {
+      const ch = sb.channel(`rt-${table}-${Date.now()}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table }, async () => {
+          try {
+            const { data } = await sb.from(table).select('*');
+            if (data) { S[keys[i]] = data.map(fromDB); render(); }
+          } catch(e) { console.warn(`Realtime ${table}:`, e); }
+        })
+        .subscribe();
+      realtimeChannels.push(ch);
+    } catch(e) { console.warn(`Subscribe ${table}:`, e); }
+  });
 }
 
 // ═══════════════════════════════════
@@ -2272,7 +2280,10 @@ function showToast(msg, color = '#3fb950') {
 window.addEventListener('online', () => { S.online = true; showToast('Connecté · synchronisation…', '#3fb950'); initApp(); });
 window.addEventListener('offline', () => { S.online = false; showToast('Hors ligne · mode local', '#d29922'); });
 
+let initInProgress = false;
 async function initApp() {
+  if (initInProgress) return;
+  initInProgress = true;
   renderNav();
   showLoading();
   try {
@@ -2308,6 +2319,7 @@ async function initApp() {
     S.loading = false;
     showToast('Erreur · cache local', '#f85149');
   }
+  initInProgress = false;
   render();
 }
 
