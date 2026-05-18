@@ -14,6 +14,7 @@
   <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%230d1117'/%3E%3Ctext x='90' y='120' text-anchor='middle' font-family='system-ui' font-weight='700' font-size='72' fill='%23e8970a'%3E⚙%3C/text%3E%3C/svg%3E">
 
   <title>GMAO</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <style>
     :root {
       --bg: #0d1117; --surface: #161b22; --surface2: #1c2128;
@@ -163,6 +164,101 @@ const parseQR = str => str.startsWith(QR_PFX) ? str.slice(QR_PFX.length) : null;
 // ═══════════════════════════════════
 // STORAGE
 // ═══════════════════════════════════
+// ═══════════════════════════════════
+// SUPABASE
+// ═══════════════════════════════════
+const SUPABASE_URL = 'https://ehygoaorqrdknjrumvga.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVoeWdvYW9ycXJka25qcnVtdmdhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkwNzQ5NjMsImV4cCI6MjA5NDY1MDk2M30.dsj9f6c21TBwmuulxFjN_Ug78lOSdlhCTkHAnDUTyQ0';
+
+// Protection : si le SDK Supabase ne charge pas, on désactive le cloud et on tourne en local
+let sb = null;
+let cloudEnabled = false;
+try {
+  if (window.supabase && window.supabase.createClient) {
+    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    cloudEnabled = true;
+  } else {
+    console.warn('SDK Supabase non chargé, mode local uniquement');
+  }
+} catch(e) {
+  console.error('Erreur init Supabase:', e);
+}
+
+// Mapping camelCase JS ⇄ snake_case DB
+const camelToSnake = {
+  equipementId: 'equipement_id',
+  dateMAJ: 'date_maj',
+  dateCreation: 'date_creation',
+  datePrevue: 'date_prevue',
+  dateCloture: 'date_cloture',
+  dernierPassage: 'dernier_passage',
+  prochaineEcheance: 'prochaine_echeance',
+  seuilAlerte: 'seuil_alerte',
+  prixUnitaire: 'prix_unitaire',
+};
+const snakeToCamel = Object.fromEntries(Object.entries(camelToSnake).map(([k,v])=>[v,k]));
+
+const toDB = (obj) => {
+  const out = {};
+  for (const [k,v] of Object.entries(obj)) out[camelToSnake[k] || k] = v;
+  return out;
+};
+const fromDB = (obj) => {
+  const out = {};
+  for (const [k,v] of Object.entries(obj)) {
+    if (k === 'updated_at') continue;
+    out[snakeToCamel[k] || k] = v;
+  }
+  return out;
+};
+
+const TABLES = { eq: 'equipements', ots: 'ots', prev: 'preventif', stock: 'stock' };
+
+// Chargement initial depuis Supabase
+async function loadFromCloud() {
+  if (!cloudEnabled) throw new Error('Cloud désactivé');
+  const results = {};
+  for (const [key, table] of Object.entries(TABLES)) {
+    const { data, error } = await sb.from(table).select('*');
+    if (error) { console.error(`Load ${table}:`, error); results[key] = []; }
+    else results[key] = (data || []).map(fromDB);
+  }
+  return results;
+}
+
+// Upsert (création ou mise à jour) d'une ligne
+async function upsertRow(tableKey, row) {
+  if (!cloudEnabled) return;
+  const { error } = await sb.from(TABLES[tableKey]).upsert(toDB(row));
+  if (error) console.error('Upsert:', error);
+}
+
+// Suppression
+async function deleteRow(tableKey, id) {
+  if (!cloudEnabled) return;
+  const { error } = await sb.from(TABLES[tableKey]).delete().eq('id', id);
+  if (error) console.error('Delete:', error);
+}
+
+// Subscribe temps réel : écoute les changements sur toutes les tables
+function subscribeAll() {
+  if (!cloudEnabled) return;
+  for (const [key, table] of Object.entries(TABLES)) {
+    sb.channel(`rt-${table}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table }, async () => {
+        const { data } = await sb.from(table).select('*');
+        if (data) {
+          S[key] = data.map(fromDB);
+          render();
+        }
+      })
+      .subscribe();
+  }
+}
+
+// ═══════════════════════════════════
+// STORAGE local (fallback hors-ligne uniquement)
+// ═══════════════════════════════════
 const lsLoad = (k,fb) => { try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;} };
 const lsSave = (k,d) => { try{localStorage.setItem(k,JSON.stringify(d));}catch{} };
 
@@ -195,17 +291,42 @@ const DEMO_STOCK=[
 // ═══════════════════════════════════
 const S = {
   page:'dashboard',
-  eq: lsLoad('gmao-eq',DEMO_EQ),
-  ots: lsLoad('gmao-ot',DEMO_OT),
-  prev: lsLoad('gmao-prev',DEMO_PREV),
-  stock: lsLoad('gmao-stock',DEMO_STOCK),
+  eq: [], ots: [], prev: [], stock: [],
   search:{eq:'',ots:'',prev:'',stock:''},
   otFilter:'all',
+  loading: true,
+  online: navigator.onLine,
 };
 
+// Tracker écritures en cours pour éviter d'écraser une saisie utilisateur
+let writesPending = 0;
+
+// Mise à jour optimiste + sync cloud
+async function syncSave(tableKey, row) {
+  writesPending++;
+  // 1. Mise à jour locale immédiate (déjà faite par l'appelant)
+  // 2. Sauvegarde dans le cloud
+  try { await upsertRow(tableKey, row); }
+  catch(e) { console.error('Sync save:', e); }
+  finally { writesPending--; }
+  // 3. Cache local de secours
+  lsSave(`gmao-${tableKey}`, S[tableKey]);
+}
+
+async function syncDelete(tableKey, id) {
+  writesPending++;
+  try { await deleteRow(tableKey, id); }
+  catch(e) { console.error('Sync delete:', e); }
+  finally { writesPending--; }
+  lsSave(`gmao-${tableKey}`, S[tableKey]);
+}
+
+// Anciennes fonctions conservées pour compatibilité (cache local)
 function saveAll() {
-  lsSave('gmao-eq',S.eq); lsSave('gmao-ot',S.ots);
-  lsSave('gmao-prev',S.prev); lsSave('gmao-stock',S.stock);
+  lsSave('gmao-eq', S.eq);
+  lsSave('gmao-ot', S.ots);
+  lsSave('gmao-prev', S.prev);
+  lsSave('gmao-stock', S.stock);
 }
 
 // ═══════════════════════════════════
@@ -426,14 +547,16 @@ function saveEq(id) {
   const nom = document.getElementById('en').value.trim();
   if (!nom) { alert('Désignation obligatoire'); return; }
   const d = {nom,type:document.getElementById('et').value,statut:document.getElementById('es').value,localisation:document.getElementById('el').value,dateMAJ:document.getElementById('ed').value,observations:document.getElementById('eo').value};
-  if (id) S.eq=S.eq.map(e=>e.id===id?{...e,...d}:e);
-  else S.eq=[...S.eq,{id:uid(),...d}];
-  saveAll(); closeModal(); render();
+  const row = id ? {...S.eq.find(e=>e.id===id), ...d} : {id:uid(), ...d};
+  if (id) S.eq=S.eq.map(e=>e.id===id?row:e);
+  else S.eq=[...S.eq, row];
+  syncSave('eq', row); closeModal(); render();
 }
 
 function delEq(id) {
   if (!confirm('Supprimer ?')) return;
-  S.eq=S.eq.filter(e=>e.id!==id); saveAll(); closeModal(); render();
+  S.eq=S.eq.filter(e=>e.id!==id);
+  syncDelete('eq', id); closeModal(); render();
 }
 
 // ═══════════════════════════════════
@@ -735,14 +858,16 @@ function saveOT(id) {
   const titre=document.getElementById('ott').value.trim();
   if (!titre) { alert('Titre obligatoire'); return; }
   const d={titre,equipementId:document.getElementById('oteq').value,type:document.getElementById('otty').value,priorite:document.getElementById('otpr').value,statut:document.getElementById('otst').value,technicien:document.getElementById('ottech').value,datePrevue:document.getElementById('otd').value,dateCloture:document.getElementById('otc').value,description:document.getElementById('otdes').value,observations:document.getElementById('otob').value};
-  if (id) S.ots=S.ots.map(o=>o.id===id?{...o,...d}:o);
-  else S.ots=[...S.ots,{id:uid(),numero:nextOT(S.ots),dateCreation:today(),...d}];
-  saveAll(); closeModal(); render();
+  const row = id ? {...S.ots.find(o=>o.id===id), ...d} : {id:uid(), numero:nextOT(S.ots), dateCreation:today(), ...d};
+  if (id) S.ots=S.ots.map(o=>o.id===id?row:o);
+  else S.ots=[...S.ots, row];
+  syncSave('ots', row); closeModal(); render();
 }
 
 function delOT(id) {
   if (!confirm('Supprimer ?')) return;
-  S.ots=S.ots.filter(o=>o.id!==id); saveAll(); closeModal(); render();
+  S.ots=S.ots.filter(o=>o.id!==id);
+  syncDelete('ots', id); closeModal(); render();
 }
 
 // ═══════════════════════════════════
@@ -787,8 +912,9 @@ function pgPreventif() {
 function marquerFait(id) {
   const p=S.prev.find(x=>x.id===id); if (!p) return;
   const d=new Date(); d.setDate(d.getDate()+(FREQ_DAYS[p.frequence]||30));
-  S.prev=S.prev.map(x=>x.id===id?{...x,dernierPassage:today(),prochaineEcheance:d.toISOString().split('T')[0]}:x);
-  saveAll(); render();
+  const updated = {...p, dernierPassage:today(), prochaineEcheance:d.toISOString().split('T')[0]};
+  S.prev=S.prev.map(x=>x.id===id?updated:x);
+  syncSave('prev', updated); render();
 }
 
 function modalPrev(id) {
@@ -828,14 +954,16 @@ function savePrev(id) {
   const tache=document.getElementById('ptt').value.trim();
   if (!tache) { alert('Tâche obligatoire'); return; }
   const d={tache,equipementId:document.getElementById('peq').value,frequence:document.getElementById('pfr').value,technicien:document.getElementById('pte').value,dernierPassage:document.getElementById('pla').value,prochaineEcheance:document.getElementById('pne').value,observations:document.getElementById('pob').value};
-  if (id) S.prev=S.prev.map(p=>p.id===id?{...p,...d}:p);
-  else S.prev=[...S.prev,{id:uid(),...d}];
-  saveAll(); closeModal(); render();
+  const row = id ? {...S.prev.find(p=>p.id===id), ...d} : {id:uid(), ...d};
+  if (id) S.prev=S.prev.map(p=>p.id===id?row:p);
+  else S.prev=[...S.prev, row];
+  syncSave('prev', row); closeModal(); render();
 }
 
 function delPrev(id) {
   if (!confirm('Supprimer ?')) return;
-  S.prev=S.prev.filter(p=>p.id!==id); saveAll(); closeModal(); render();
+  S.prev=S.prev.filter(p=>p.id!==id);
+  syncDelete('prev', id); closeModal(); render();
 }
 
 // ═══════════════════════════════════
@@ -881,8 +1009,10 @@ function pgStock() {
 }
 
 function adjStock(id, delta) {
-  S.stock=S.stock.map(s=>s.id===id?{...s,quantite:Math.max(0,s.quantite+delta)}:s);
-  saveAll(); render();
+  const item = S.stock.find(s=>s.id===id); if (!item) return;
+  const updated = {...item, quantite: Math.max(0, item.quantite+delta)};
+  S.stock=S.stock.map(s=>s.id===id?updated:s);
+  syncSave('stock', updated); render();
 }
 
 function modalSt(id) {
@@ -921,14 +1051,16 @@ function saveSt(id) {
   const designation=document.getElementById('sd').value.trim();
   if (!designation) { alert('Désignation obligatoire'); return; }
   const d={designation,reference:document.getElementById('sr').value,categorie:document.getElementById('sc').value,fournisseur:document.getElementById('sf').value,localisation:document.getElementById('sl').value,quantite:Number(document.getElementById('sq').value)||0,seuilAlerte:Number(document.getElementById('ss').value)||0,prixUnitaire:Number(document.getElementById('sp').value)||0,observations:document.getElementById('so').value};
-  if (id) S.stock=S.stock.map(s=>s.id===id?{...s,...d}:s);
-  else S.stock=[...S.stock,{id:uid(),...d}];
-  saveAll(); closeModal(); render();
+  const row = id ? {...S.stock.find(s=>s.id===id), ...d} : {id:uid(), ...d};
+  if (id) S.stock=S.stock.map(s=>s.id===id?row:s);
+  else S.stock=[...S.stock, row];
+  syncSave('stock', row); closeModal(); render();
 }
 
 function delSt(id) {
   if (!confirm('Supprimer ?')) return;
-  S.stock=S.stock.filter(s=>s.id!==id); saveAll(); closeModal(); render();
+  S.stock=S.stock.filter(s=>s.id!==id);
+  syncDelete('stock', id); closeModal(); render();
 }
 
 // ═══════════════════════════════════
@@ -967,7 +1099,71 @@ function showInstallBanner() {
 // ═══════════════════════════════════
 // INIT
 // ═══════════════════════════════════
-render();
+
+// Indicateur de chargement
+function showLoading() {
+  document.getElementById('content').innerHTML = `
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:60vh;gap:14px">
+      <div style="width:36px;height:36px;border:3px solid #30363d;border-top-color:#e8970a;border-radius:50%;animation:spin 0.8s linear infinite"></div>
+      <div style="color:#8b949e;font-size:13px">Synchronisation cloud…</div>
+    </div>
+    <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+  `;
+}
+
+// Affiche un toast court de statut connexion
+let toastTimer;
+function showToast(msg, color = '#3fb950') {
+  let t = document.getElementById('toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'toast';
+    t.style.cssText = 'position:fixed;bottom:calc(80px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);background:#161b22;border:1px solid #30363d;color:#e6edf3;padding:9px 18px;border-radius:100px;font-size:12px;font-weight:600;z-index:300;box-shadow:0 4px 14px rgba(0,0,0,0.4);opacity:0;transition:opacity .25s';
+    document.body.appendChild(t);
+  }
+  t.innerHTML = `<span style="color:${color}">●</span> ${msg}`;
+  t.style.opacity = '1';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.style.opacity = '0'; }, 2500);
+}
+
+// Détection online/offline
+window.addEventListener('online', () => { S.online = true; showToast('Connecté · synchronisation…', '#3fb950'); initApp(); });
+window.addEventListener('offline', () => { S.online = false; showToast('Hors ligne · mode local', '#d29922'); });
+
+async function initApp() {
+  renderNav();
+  showLoading();
+  try {
+    if (cloudEnabled && navigator.onLine) {
+      const data = await loadFromCloud();
+      S.eq = data.eq; S.ots = data.ots; S.prev = data.prev; S.stock = data.stock;
+      saveAll();
+      S.loading = false;
+      subscribeAll();
+      showToast('Cloud connecté', '#3fb950');
+    } else {
+      S.eq = lsLoad('gmao-eq', []);
+      S.ots = lsLoad('gmao-ot', []);
+      S.prev = lsLoad('gmao-prev', []);
+      S.stock = lsLoad('gmao-stock', []);
+      S.loading = false;
+      if (!cloudEnabled) showToast('Mode local (cloud indisponible)', '#d29922');
+      else showToast('Hors ligne · mode local', '#d29922');
+    }
+  } catch (e) {
+    console.error('Init:', e);
+    S.eq = lsLoad('gmao-eq', []);
+    S.ots = lsLoad('gmao-ot', []);
+    S.prev = lsLoad('gmao-prev', []);
+    S.stock = lsLoad('gmao-stock', []);
+    S.loading = false;
+    showToast('Erreur · cache local', '#f85149');
+  }
+  render();
+}
+
+initApp();
 showInstallBanner();
 </script>
 </body>
