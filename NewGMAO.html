@@ -681,13 +681,16 @@ function printAllQR() {
 let scanStream=null, scanRAF=null;
 
 function openScanner() {
+  // Arrêter toute caméra précédente
+  stopScanner();
+
   openModal(`
     <div class="mh"></div>
     <div class="mhd"><span class="mt">📷 Scanner QR</span><button class="mc" onclick="closeScanner()">×</button></div>
     <div class="mb">
       <div id="scan-st" style="text-align:center;color:var(--muted);font-size:13px;margin-bottom:12px">Démarrage caméra…</div>
-      <div style="position:relative;border-radius:14px;overflow:hidden">
-        <video id="scan-vid" playsinline muted autoplay></video>
+      <div style="position:relative;border-radius:14px;overflow:hidden;background:#000">
+        <video id="scan-vid" playsinline muted autoplay style="width:100%;display:block"></video>
         <canvas id="scan-cv" style="display:none"></canvas>
         <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">
           <div style="position:relative;width:190px;height:190px">
@@ -703,7 +706,8 @@ function openScanner() {
       <div id="scan-res" style="margin-top:14px"></div>
     </div>`);
 
-  startScanner();
+  // Lancer après que le DOM soit prêt
+  setTimeout(() => startScanner(), 100);
 }
 
 async function startScanner() {
@@ -712,23 +716,58 @@ async function startScanner() {
   const cv=document.getElementById('scan-cv');
   if (!vid||!cv) return;
 
-  try {
-    scanStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}}});
-    vid.srcObject=scanStream;
-    await vid.play();
-    if (stEl) stEl.textContent='Pointez vers un QR code GMAO';
-
-    if (!window.jsQR) {
-      await new Promise((res,rej)=>{
-        const s=document.createElement('script');
-        s.src='https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.js';
-        s.onload=res; s.onerror=rej; document.head.appendChild(s);
-      });
-    }
-    scanTick(vid,cv);
-  } catch(e) {
-    if (stEl) stEl.innerHTML=`<span style="color:${C.danger}">⚠ ${e.name==='NotAllowedError'?'Accès caméra refusé':'Caméra non disponible'}</span>`;
+  // 1. Charger jsQR EN PARALLÈLE (non-bloquant pour la caméra)
+  if (!window.jsQR) {
+    const s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.js';
+    document.head.appendChild(s);
   }
+
+  // 2. Vérifier que l'API caméra existe
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    if (stEl) stEl.innerHTML=`<span style="color:${C.danger}">⚠ API caméra non disponible sur ce navigateur</span>`;
+    return;
+  }
+
+  // 3. Demander la caméra (sans bloquer sur les contraintes idéales)
+  try {
+    scanStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment' },
+      audio: false
+    });
+  } catch(e1) {
+    // Fallback : caméra avant ou n'importe quelle caméra
+    try {
+      scanStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    } catch(e2) {
+      if (stEl) {
+        if (e2.name === 'NotAllowedError') {
+          stEl.innerHTML = `<span style="color:${C.danger}">⚠ Accès caméra refusé. Allez dans Réglages iPhone → GMAO → Caméra pour autoriser.</span>`;
+        } else if (e2.name === 'NotFoundError') {
+          stEl.innerHTML = `<span style="color:${C.danger}">⚠ Aucune caméra détectée</span>`;
+        } else {
+          stEl.innerHTML = `<span style="color:${C.danger}">⚠ Caméra non disponible (${e2.name})</span>`;
+        }
+      }
+      return;
+    }
+  }
+
+  // 4. Brancher le flux vidéo
+  try {
+    vid.srcObject = scanStream;
+    vid.setAttribute('playsinline', 'true');
+    vid.setAttribute('muted', 'true');
+    await vid.play();
+    if (stEl) stEl.textContent = 'Pointez vers un QR code GMAO';
+  } catch(e) {
+    if (stEl) stEl.innerHTML = `<span style="color:${C.danger}">⚠ Lecture vidéo impossible</span>`;
+    stopScanner();
+    return;
+  }
+
+  // 5. Lancer la boucle de détection (attend jsQR s'il n'est pas encore chargé)
+  scanTick(vid, cv);
 }
 
 function scanTick(vid,cv) {
