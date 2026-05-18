@@ -16,6 +16,8 @@
   <title>GMAO</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.0/jspdf.plugin.autotable.min.js"></script>
   <style>
     :root {
       --bg: #0d1117; --surface: #161b22; --surface2: #1c2128;
@@ -205,6 +207,11 @@ const camelToSnake = {
   prixUnitaire: 'prix_unitaire',
   otId: 'ot_id',
   pieceId: 'piece_id',
+  parentType: 'parent_type',
+  parentId: 'parent_id',
+  typeFichier: 'type_fichier',
+  storagePath: 'storage_path',
+  dateAjout: 'date_ajout',
 };
 const snakeToCamel = Object.fromEntries(Object.entries(camelToSnake).map(([k,v])=>[v,k]));
 
@@ -222,7 +229,7 @@ const fromDB = (obj) => {
   return out;
 };
 
-const TABLES = { eq: 'equipements', ots: 'ots', prev: 'preventif', stock: 'stock', otPieces: 'ot_pieces', settings: 'settings' };
+const TABLES = { eq: 'equipements', ots: 'ots', prev: 'preventif', stock: 'stock', otPieces: 'ot_pieces', settings: 'settings', docs: 'documents' };
 
 // Chargement initial depuis Supabase
 async function loadFromCloud() {
@@ -301,7 +308,7 @@ const DEMO_STOCK=[
 // ═══════════════════════════════════
 const S = {
   page:'dashboard',
-  eq: [], ots: [], prev: [], stock: [], otPieces: [], settings: [],
+  eq: [], ots: [], prev: [], stock: [], otPieces: [], settings: [], docs: [],
   search:{eq:'',ots:'',prev:'',stock:''},
   otFilter:'all',
   statsPeriod: '30',  // jours
@@ -352,6 +359,7 @@ function saveAll() {
   lsSave('gmao-stock', S.stock);
   lsSave('gmao-otPieces', S.otPieces);
   lsSave('gmao-settings', S.settings);
+  lsSave('gmao-docs', S.docs);
 }
 
 // ═══════════════════════════════════
@@ -565,7 +573,8 @@ function modalEq(id) {
       <div class="fi"><label class="fl">Localisation</label><input class="inp" id="el" value="${esc(f.localisation)}" placeholder="Ex: Atelier A"/></div>
       <div class="fi"><label class="fl">Date MAJ</label><input class="inp" type="date" id="ed" value="${f.dateMAJ||''}"/></div>
       <div class="fi"><label class="fl">Observations</label><textarea class="ta" id="eo">${esc(f.observations)}</textarea></div>
-      ${!isN?`<button class="bd" onclick="delEq('${eq.id}')">Supprimer cet équipement</button>`:''}
+      ${!isN?`<hr style="border:none;border-top:1px solid var(--border);margin:14px 0">${renderDocsSection('eq', eq.id)}`:`<div style="font-size:11px;color:var(--muted);font-style:italic;margin:12px 0;padding:10px;background:var(--bg);border-radius:8px">💡 Enregistrez la machine pour ajouter des documents.</div>`}
+      ${!isN?`<button class="bd" onclick="delEq('${eq.id}')" style="margin-top:14px">Supprimer cet équipement</button>`:''}
       <button class="bp" onclick="saveEq('${isN?'':eq.id}')">${isN?'Créer l\'équipement':'Enregistrer'}</button>
     </div>`);
 }
@@ -1177,7 +1186,8 @@ function modalOT(id) {
       <hr style="border:none;border-top:1px solid var(--border);margin:14px 0">
       <div class="fi"><label class="fl">Description</label><textarea class="ta" id="otdes">${esc(f.description)}</textarea></div>
       <div class="fi"><label class="fl">Observations</label><textarea class="ta" id="otob">${esc(f.observations)}</textarea></div>
-      ${!isN?`<button class="bd" onclick="delOT('${ot.id}')">Supprimer cet OT</button>`:''}
+      ${!isN ? `<hr style="border:none;border-top:1px solid var(--border);margin:14px 0">${renderDocsSection('ot', ot.id)}` : ''}
+      ${!isN?`<button class="bd" onclick="delOT('${ot.id}')" style="margin-top:14px">Supprimer cet OT</button>`:''}
       <button class="bp" onclick="saveOT('${isN?'':ot.id}')">${isN?'Créer l\'OT':'Enregistrer'}</button>
     </div>`);
 }
@@ -1287,6 +1297,127 @@ function delOT(id) {
   if (!confirm('Supprimer ?')) return;
   S.ots=S.ots.filter(o=>o.id!==id);
   syncDelete('ots', id); closeModal(); render();
+}
+
+// ═══════════════════════════════════
+// DOCUMENTS (PDF, photos, schémas)
+// ═══════════════════════════════════
+const BUCKET = 'gmao-files';
+
+// Upload d'un fichier vers Supabase Storage
+async function uploadFile(file, parentType, parentId) {
+  if (!cloudEnabled) {
+    alert('Cloud non disponible. Connexion requise pour uploader des documents.');
+    return null;
+  }
+  // Limite : 10 Mo
+  if (file.size > 10 * 1024 * 1024) {
+    alert('Fichier trop volumineux (max 10 Mo)');
+    return null;
+  }
+  // Nom unique
+  const ext = file.name.split('.').pop();
+  const path = `${parentType}/${parentId}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+
+  showToast('Upload en cours…', '#58a6ff');
+  const { error: upErr } = await sb.storage.from(BUCKET).upload(path, file);
+  if (upErr) {
+    console.error('Upload:', upErr);
+    showToast('Erreur upload: ' + upErr.message, '#f85149');
+    return null;
+  }
+  // URL publique
+  const { data: urlData } = sb.storage.from(BUCKET).getPublicUrl(path);
+  const doc = {
+    id: uid(),
+    parentType,
+    parentId,
+    nom: file.name,
+    typeFichier: file.type || ext,
+    taille: file.size,
+    url: urlData.publicUrl,
+    storagePath: path,
+    dateAjout: today(),
+  };
+  S.docs = [...S.docs, doc];
+  await syncSave('docs', doc);
+  showToast('Document ajouté', '#3fb950');
+  return doc;
+}
+
+async function deleteDoc(docId) {
+  if (!confirm('Supprimer ce document ?')) return;
+  const doc = S.docs.find(d => d.id === docId);
+  if (!doc) return;
+  if (cloudEnabled && doc.storagePath) {
+    await sb.storage.from(BUCKET).remove([doc.storagePath]);
+  }
+  S.docs = S.docs.filter(d => d.id !== docId);
+  await syncDelete('docs', docId);
+  showToast('Document supprimé', '#3fb950');
+  return true;
+}
+
+// Renvoie une icône selon le type de fichier
+const docIcon = (type, nom) => {
+  const ext = (nom || '').split('.').pop().toLowerCase();
+  if (/pdf/i.test(type) || ext === 'pdf') return '📄';
+  if (/image|jpe?g|png|gif|webp|heic/i.test(type) || /jpe?g|png|gif|webp|heic/i.test(ext)) return '🖼️';
+  if (/word|doc/i.test(type) || /docx?$/.test(ext)) return '📝';
+  if (/excel|sheet|csv/i.test(type) || /xlsx?|csv$/.test(ext)) return '📊';
+  if (/video/i.test(type) || /mp4|mov|avi/i.test(ext)) return '🎬';
+  return '📎';
+};
+
+const fmtSize = (b) => {
+  if (b < 1024) return b + ' o';
+  if (b < 1024*1024) return (b/1024).toFixed(1) + ' Ko';
+  return (b/1024/1024).toFixed(1) + ' Mo';
+};
+
+// Render une section "Documents" attachée à un parent (equipement ou OT)
+function renderDocsSection(parentType, parentId) {
+  const list = S.docs.filter(d => d.parentType === parentType && d.parentId === parentId);
+  const rows = list.length === 0
+    ? `<div style="padding:14px;color:var(--muted);font-size:12px;text-align:center;font-style:italic">Aucun document</div>`
+    : list.map(d => `
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border)22">
+          <div style="font-size:22px;flex-shrink:0">${docIcon(d.typeFichier, d.nom)}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.nom)}</div>
+            <div style="font-size:11px;color:var(--muted)">${fmtSize(d.taille||0)} · ${fmt(d.dateAjout)}</div>
+          </div>
+          <a href="${d.url}" target="_blank" rel="noopener" style="background:rgba(88,166,255,.12);border:1px solid rgba(88,166,255,.35);color:${C.info};font-size:11px;padding:5px 10px;border-radius:6px;text-decoration:none;font-weight:600">Ouvrir</a>
+          <button onclick="onDeleteDoc('${d.id}','${parentType}','${parentId}')" style="background:transparent;border:1px solid ${C.danger}44;color:${C.danger};font-size:11px;padding:5px 9px;border-radius:6px;cursor:pointer">✕</button>
+        </div>`).join('');
+  return `
+    <div id="docs-section-${parentType}-${parentId}">
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
+        <span>📎 DOCUMENTS (${list.length})</span>
+      </div>
+      <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:10px">${rows}</div>
+      <input type="file" id="file-input-${parentType}-${parentId}" style="display:none" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" onchange="onFilePicked(event,'${parentType}','${parentId}')"/>
+      <button onclick="document.getElementById('file-input-${parentType}-${parentId}').click()" style="background:rgba(232,151,10,.12);border:1px solid rgba(232,151,10,.35);color:${C.accent};font-size:13px;font-weight:700;padding:9px;border-radius:8px;cursor:pointer;width:100%;font-family:-apple-system,sans-serif">+ Ajouter un document</button>
+    </div>
+  `;
+}
+
+async function onFilePicked(event, parentType, parentId) {
+  const file = event.target.files[0];
+  if (!file) return;
+  event.target.value = '';  // reset input
+  await uploadFile(file, parentType, parentId);
+  // Re-render la section
+  const container = document.getElementById(`docs-section-${parentType}-${parentId}`);
+  if (container) container.outerHTML = renderDocsSection(parentType, parentId);
+}
+
+async function onDeleteDoc(docId, parentType, parentId) {
+  const ok = await deleteDoc(docId);
+  if (ok) {
+    const container = document.getElementById(`docs-section-${parentType}-${parentId}`);
+    if (container) container.outerHTML = renderDocsSection(parentType, parentId);
+  }
 }
 
 // ═══════════════════════════════════
@@ -1715,8 +1846,276 @@ function pgStats() {
       ${KPI(stockAlt, 'Alertes stock', stockAlt?'Réappro nécessaire':'OK', stockAlt?C.warning:C.success)}
     </div>
 
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">📄 RAPPORT PDF</div>
+    <div class="card" style="padding:14px">
+      <div style="font-size:13px;color:var(--text);margin-bottom:10px">Générer un rapport PDF complet du mois</div>
+      <select class="sel" id="rpt-mois" style="margin-bottom:10px">
+        ${(function(){
+          const opts = [];
+          for (let i = 0; i < 12; i++) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            const lbl = d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+            opts.push(`<option value="${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}">${lbl}</option>`);
+          }
+          return opts.join('');
+        })()}
+      </select>
+      <button class="bp" onclick="generateMonthlyReport()" style="margin-top:0">📥 Télécharger le rapport PDF</button>
+    </div>
+
     <div class="sp"></div>
   `;
+}
+
+// ═══════════════════════════════════
+// RAPPORT PDF MENSUEL
+// ═══════════════════════════════════
+async function generateMonthlyReport() {
+  const sel = document.getElementById('rpt-mois');
+  if (!sel || !window.jspdf) { alert('Génération impossible'); return; }
+  const [year, month] = sel.value.split('-').map(Number);
+  const start = new Date(year, month - 1, 1);
+  const end = new Date(year, month, 1);
+  const monthLabel = start.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+
+  showToast('Génération du rapport…', '#58a6ff');
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+
+  // Couleurs (en RGB pour jsPDF)
+  const cAccent = [232, 151, 10];
+  const cText = [33, 37, 41];
+  const cMuted = [108, 117, 125];
+  const cDanger = [220, 53, 69];
+  const cSuccess = [40, 167, 69];
+
+  // Header
+  doc.setFillColor(...cAccent);
+  doc.rect(0, 0, 210, 30, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(20);
+  doc.setFont('helvetica', 'bold');
+  doc.text('RAPPORT DE MAINTENANCE', 14, 14);
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'normal');
+  doc.text(monthLabel.toUpperCase(), 14, 22);
+  doc.setFontSize(8);
+  doc.text(`Généré le ${new Date().toLocaleDateString('fr-FR')}`, 150, 22);
+
+  // Filtrer OT du mois
+  const otsMonth = S.ots.filter(o => {
+    if (!o.dateCreation) return false;
+    const d = new Date(o.dateCreation);
+    return d >= start && d < end;
+  });
+  const correctifs = otsMonth.filter(o => o.type === 'correctif');
+  const preventifs = otsMonth.filter(o => o.type === 'préventif');
+  const termines = otsMonth.filter(o => o.statut === 'terminé');
+  const enCours = otsMonth.filter(o => !['terminé','annulé'].includes(o.statut));
+  const coutMOTotal = otsMonth.reduce((s,o) => s + (Number(o.coutMO)||0), 0);
+  const coutPiecesTotal = otsMonth.reduce((s,o) => s + (Number(o.coutPieces)||0), 0);
+  const coutTotal = coutMOTotal + coutPiecesTotal;
+  const dureeTotal = termines.reduce((s,o) => s + (Number(o.dureeH)||0), 0);
+
+  let y = 40;
+
+  // Section : Synthèse
+  doc.setTextColor(...cText);
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Synthèse du mois', 14, y);
+  y += 6;
+  doc.setDrawColor(...cAccent);
+  doc.setLineWidth(0.5);
+  doc.line(14, y, 196, y);
+  y += 8;
+
+  // KPIs en grille
+  const kpis = [
+    [`${otsMonth.length}`, 'OT créés'],
+    [`${termines.length}`, 'OT terminés'],
+    [`${correctifs.length}`, 'Pannes (correctif)'],
+    [`${preventifs.length}`, 'Préventifs réalisés'],
+    [`${dureeTotal.toFixed(1)} h`, 'Temps total intervention'],
+    [`${coutTotal.toFixed(2)} €`, 'Coût total mois'],
+  ];
+  doc.setFontSize(9);
+  kpis.forEach((kpi, i) => {
+    const col = i % 3;
+    const row = Math.floor(i / 3);
+    const x = 14 + col * 62;
+    const yy = y + row * 22;
+    doc.setFillColor(245, 245, 247);
+    doc.roundedRect(x, yy, 58, 18, 2, 2, 'F');
+    doc.setTextColor(...cAccent);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.text(kpi[0], x + 3, yy + 8);
+    doc.setTextColor(...cMuted);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text(kpi[1], x + 3, yy + 14);
+  });
+  y += 50;
+
+  // Détail coûts
+  doc.setTextColor(...cText);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text('Détail des coûts', 14, y);
+  y += 6;
+  doc.autoTable({
+    startY: y,
+    head: [['Catégorie', 'Montant']],
+    body: [
+      ['Main d\'œuvre', `${coutMOTotal.toFixed(2)} €`],
+      ['Pièces consommées', `${coutPiecesTotal.toFixed(2)} €`],
+      ['TOTAL', `${coutTotal.toFixed(2)} €`],
+    ],
+    theme: 'grid',
+    headStyles: { fillColor: cAccent, textColor: 255, fontStyle: 'bold' },
+    styles: { fontSize: 9 },
+    margin: { left: 14, right: 14 },
+  });
+  y = doc.lastAutoTable.finalY + 10;
+
+  // Liste OT du mois
+  if (otsMonth.length > 0) {
+    if (y > 230) { doc.addPage(); y = 20; }
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.text(`Ordres de travail du mois (${otsMonth.length})`, 14, y);
+    y += 2;
+    doc.autoTable({
+      startY: y + 4,
+      head: [['N°', 'Titre', 'Machine', 'Type', 'Statut', 'Durée', 'Coût']],
+      body: otsMonth.map(o => {
+        const eq = S.eq.find(e => e.id === o.equipementId);
+        return [
+          o.numero || '—',
+          (o.titre||'').slice(0, 35),
+          (eq?.nom || '—').slice(0, 25),
+          o.type || '',
+          o.statut || '',
+          (Number(o.dureeH)||0).toFixed(1) + 'h',
+          (Number(o.coutTotal)||0).toFixed(2) + ' €',
+        ];
+      }),
+      theme: 'striped',
+      headStyles: { fillColor: cAccent, textColor: 255, fontStyle: 'bold' },
+      styles: { fontSize: 8 },
+      margin: { left: 14, right: 14 },
+      columnStyles: { 6: { halign: 'right' } },
+    });
+    y = doc.lastAutoTable.finalY + 10;
+  }
+
+  // Top machines problématiques
+  const pannesCount = {};
+  correctifs.forEach(o => {
+    pannesCount[o.equipementId] = (pannesCount[o.equipementId]||0) + 1;
+  });
+  const topMachines = Object.entries(pannesCount)
+    .map(([id, n]) => ({ eq: S.eq.find(e=>e.id===id), n }))
+    .filter(x => x.eq)
+    .sort((a,b) => b.n - a.n)
+    .slice(0, 10);
+
+  if (topMachines.length > 0) {
+    if (y > 230) { doc.addPage(); y = 20; }
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.text('Machines les plus problématiques', 14, y);
+    doc.autoTable({
+      startY: y + 4,
+      head: [['Rang', 'Machine', 'Localisation', 'Nb pannes']],
+      body: topMachines.map((m, i) => [`#${i+1}`, m.eq.nom, m.eq.localisation || '—', m.n]),
+      theme: 'striped',
+      headStyles: { fillColor: cAccent, textColor: 255 },
+      styles: { fontSize: 8 },
+      margin: { left: 14, right: 14 },
+    });
+    y = doc.lastAutoTable.finalY + 10;
+  }
+
+  // État du parc (au moment de la génération)
+  if (y > 230) { doc.addPage(); y = 20; }
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text('État actuel du parc', 14, y);
+  const byStatut = {};
+  S.eq.forEach(e => { byStatut[e.statut] = (byStatut[e.statut]||0) + 1; });
+  doc.autoTable({
+    startY: y + 4,
+    head: [['Statut', 'Nombre', '%']],
+    body: Object.entries(byStatut).map(([s,n]) => [s, n, ((n/S.eq.length)*100).toFixed(1)+' %']),
+    theme: 'grid',
+    headStyles: { fillColor: cAccent, textColor: 255 },
+    styles: { fontSize: 9 },
+    margin: { left: 14, right: 14 },
+  });
+  y = doc.lastAutoTable.finalY + 10;
+
+  // Préventif en retard
+  const prevRetard = S.prev.filter(p => { const d=daysUntil(p.prochaineEcheance); return d!==null && d<=0; });
+  if (prevRetard.length > 0) {
+    if (y > 230) { doc.addPage(); y = 20; }
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.setTextColor(...cDanger);
+    doc.text(`⚠ Préventif en retard (${prevRetard.length})`, 14, y);
+    doc.setTextColor(...cText);
+    doc.autoTable({
+      startY: y + 4,
+      head: [['Tâche', 'Machine', 'Échéance', 'Retard']],
+      body: prevRetard.map(p => {
+        const eq = S.eq.find(e=>e.id===p.equipementId);
+        const d = daysUntil(p.prochaineEcheance);
+        return [p.tache, eq?.nom||'—', fmt(p.prochaineEcheance), `${Math.abs(d)} jour(s)`];
+      }),
+      theme: 'striped',
+      headStyles: { fillColor: cDanger, textColor: 255 },
+      styles: { fontSize: 8 },
+      margin: { left: 14, right: 14 },
+    });
+    y = doc.lastAutoTable.finalY + 10;
+  }
+
+  // Stock alertes
+  const stockAlertes = S.stock.filter(s => s.quantite <= s.seuilAlerte);
+  if (stockAlertes.length > 0) {
+    if (y > 230) { doc.addPage(); y = 20; }
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.setTextColor(...cDanger);
+    doc.text(`⚠ Stock en alerte (${stockAlertes.length})`, 14, y);
+    doc.setTextColor(...cText);
+    doc.autoTable({
+      startY: y + 4,
+      head: [['Référence', 'Désignation', 'Stock', 'Seuil', 'Fournisseur']],
+      body: stockAlertes.map(s => [s.reference||'—', s.designation, s.quantite, s.seuilAlerte, s.fournisseur||'—']),
+      theme: 'striped',
+      headStyles: { fillColor: cDanger, textColor: 255 },
+      styles: { fontSize: 8 },
+      margin: { left: 14, right: 14 },
+    });
+  }
+
+  // Footer sur toutes les pages
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(8);
+    doc.setTextColor(...cMuted);
+    doc.text(`GMAO · Rapport ${monthLabel}`, 14, 290);
+    doc.text(`Page ${i}/${pageCount}`, 180, 290);
+  }
+
+  // Sauvegarder le PDF
+  const filename = `Rapport_GMAO_${year}-${String(month).padStart(2,'0')}.pdf`;
+  doc.save(filename);
+  showToast('Rapport téléchargé !', '#3fb950');
 }
 
 // ═══════════════════════════════════
@@ -1875,7 +2274,7 @@ async function initApp() {
     if (cloudEnabled && navigator.onLine) {
       const data = await loadFromCloud();
       S.eq = data.eq; S.ots = data.ots; S.prev = data.prev; S.stock = data.stock;
-      S.otPieces = data.otPieces || []; S.settings = data.settings || [];
+      S.otPieces = data.otPieces || []; S.settings = data.settings || []; S.docs = data.docs || [];
       saveAll();
       S.loading = false;
       subscribeAll();
@@ -1887,6 +2286,7 @@ async function initApp() {
       S.stock = lsLoad('gmao-stock', []);
       S.otPieces = lsLoad('gmao-otPieces', []);
       S.settings = lsLoad('gmao-settings', [{id:'s-tarif',key:'tarif_horaire',value:'45'}]);
+      S.docs = lsLoad('gmao-docs', []);
       S.loading = false;
       if (!cloudEnabled) showToast('Mode local (cloud indisponible)', '#d29922');
       else showToast('Hors ligne · mode local', '#d29922');
@@ -1899,6 +2299,7 @@ async function initApp() {
     S.stock = lsLoad('gmao-stock', []);
     S.otPieces = lsLoad('gmao-otPieces', []);
     S.settings = lsLoad('gmao-settings', [{id:'s-tarif',key:'tarif_horaire',value:'45'}]);
+    S.docs = lsLoad('gmao-docs', []);
     S.loading = false;
     showToast('Erreur · cache local', '#f85149');
   }
