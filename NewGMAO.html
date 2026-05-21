@@ -217,7 +217,13 @@ const snakeToCamel = Object.fromEntries(Object.entries(camelToSnake).map(([k,v])
 
 const toDB = (obj) => {
   const out = {};
-  for (const [k,v] of Object.entries(obj)) out[camelToSnake[k] || k] = v;
+  const dateFields = ['datePrevue','dateCloture','dateDebut','dateFin','dateCreation','dateAjout','prochaineEcheance','derniereExecution'];
+  for (const [k,v] of Object.entries(obj)) {
+    let val = v;
+    // Chaînes vides sur les champs date → null (sinon PostgreSQL rejette)
+    if (dateFields.includes(k) && val === '') val = null;
+    out[camelToSnake[k] || k] = val;
+  }
   return out;
 };
 const fromDB = (obj) => {
@@ -264,26 +270,27 @@ async function deleteRow(tableKey, id) {
 
 // Subscribe temps réel : écoute les changements sur toutes les tables
 let realtimeChannels = [];
+let pollingInterval = null;
+
 function subscribeAll() {
   if (!cloudEnabled) return;
-  // Nettoyer les canaux existants
-  realtimeChannels.forEach(ch => { try { sb.removeChannel(ch); } catch(e) {} });
-  realtimeChannels = [];
-  const tables = ['equipements', 'ots', 'preventif', 'stock', 'ot_pieces', 'settings', 'documents'];
-  const keys =   ['eq',          'ots', 'prev',       'stock', 'otPieces',  'settings', 'docs'];
-  tables.forEach((table, i) => {
+  // Nettoyer l'ancien polling
+  if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
+  // Polling toutes les 30 secondes
+  pollingInterval = setInterval(async () => {
+    if (!cloudEnabled || !S.online) return;
     try {
-      const ch = sb.channel(`rt-${table}-${Date.now()}`)
-        .on('postgres_changes', { event: '*', schema: 'public', table }, async () => {
-          try {
-            const { data } = await sb.from(table).select('*');
-            if (data) { S[keys[i]] = data.map(fromDB); render(); }
-          } catch(e) { console.warn(`Realtime ${table}:`, e); }
-        })
-        .subscribe();
-      realtimeChannels.push(ch);
-    } catch(e) { console.warn(`Subscribe ${table}:`, e); }
-  });
+      const data = await loadFromCloud();
+      let changed = false;
+      if (JSON.stringify(data.eq) !== JSON.stringify(S.eq)) { S.eq = data.eq; changed = true; }
+      if (JSON.stringify(data.ots) !== JSON.stringify(S.ots)) { S.ots = data.ots; changed = true; }
+      if (JSON.stringify(data.prev) !== JSON.stringify(S.prev)) { S.prev = data.prev; changed = true; }
+      if (JSON.stringify(data.stock) !== JSON.stringify(S.stock)) { S.stock = data.stock; changed = true; }
+      if (JSON.stringify(data.otPieces) !== JSON.stringify(S.otPieces)) { S.otPieces = data.otPieces; changed = true; }
+      if (JSON.stringify(data.docs) !== JSON.stringify(S.docs)) { S.docs = data.docs; changed = true; }
+      if (changed) { saveAll(); render(); }
+    } catch(e) { console.warn('Polling error:', e); }
+  }, 30000);
 }
 
 // ═══════════════════════════════════
