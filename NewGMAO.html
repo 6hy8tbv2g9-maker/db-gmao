@@ -1831,10 +1831,24 @@ function modalPrev(id) {
     </div>
     <div class="mb">
       <div class="fi"><label class="fl">Tâche *</label><input class="inp" id="ptt" value="${esc(f.tache)}" placeholder="Ex: Vidange huile moteur"/></div>
+      ${isN ? `
+      <div class="fi">
+        <label class="fl">Machines * (cochez une ou plusieurs)</label>
+        <div style="border:1px solid var(--border);border-radius:10px;max-height:200px;overflow-y:auto;background:var(--bg)">
+          ${S.eq.length === 0 ? `<div style="padding:12px;color:var(--muted);font-size:12px">Aucune machine</div>` : S.eq.map(e=>`
+            <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border)22;cursor:pointer">
+              <input type="checkbox" class="peq-multi" value="${e.id}" style="width:18px;height:18px;accent-color:${C.accent}"/>
+              <span style="font-size:13px">${esc(e.nom)}${e.localisation?` <span style="color:var(--muted);font-size:11px">· ${esc(e.localisation)}</span>`:''}</span>
+            </label>
+          `).join('')}
+        </div>
+      </div>
+      ` : `
       <div class="fi"><label class="fl">Équipement</label><select class="sel" id="peq">
         <option value="">— Sélectionner —</option>
         ${S.eq.map(e=>`<option value="${e.id}" ${f.equipementId===e.id?'selected':''}>${esc(e.nom)}</option>`).join('')}
       </select></div>
+      `}
       <div class="g2">
         <div class="fi"><label class="fl">Fréquence</label><select class="sel" id="pfr" onchange="updateEcheanceAuto()">
           ${['hebdomadaire','mensuel','trimestriel','semestriel','annuel'].map(ff=>`<option ${f.frequence===ff?'selected':''}>${ff}</option>`).join('')}
@@ -1874,6 +1888,7 @@ function openAddPrevPiece(prevId) {
     dernierPassage: document.getElementById('pla')?.value || '',
     prochaineEcheance: document.getElementById('pne')?.value || '',
     observations: document.getElementById('pob')?.value || '',
+    machinesChecked: Array.from(document.querySelectorAll('.peq-multi:checked')).map(cb => cb.value),
   };
   openModal(`
     <div class="mh"></div>
@@ -1926,6 +1941,11 @@ function restorePrevForm(prevId) {
       set('ptt', st.tache); set('peq', st.equipementId); set('pfr', st.frequence);
       set('pte', st.technicien); set('pla', st.dernierPassage); set('pne', st.prochaineEcheance);
       set('pob', st.observations);
+      // Restaurer les machines cochées
+      (st.machinesChecked || []).forEach(eqId => {
+        const cb = document.querySelector(`.peq-multi[value="${eqId}"]`);
+        if (cb) cb.checked = true;
+      });
       // Re-render piecesRows
       const f = { piecesPrevues: window._prevPieces || [] };
       const piecesRows = f.piecesPrevues.length === 0
@@ -1958,31 +1978,47 @@ function savePrev(id) {
   const tache=document.getElementById('ptt').value.trim();
   if (!tache) { alert('Tâche obligatoire'); return; }
   let prochaineEcheance = document.getElementById('pne').value;
+  const frequence = document.getElementById('pfr').value;
+  const dernierPassage = document.getElementById('pla').value;
   // Si échéance vide mais dernier passage rempli, calculer auto
-  if (!prochaineEcheance) {
-    const dp = document.getElementById('pla').value;
-    const fr = document.getElementById('pfr').value;
-    if (dp) {
-      const d = new Date(dp); d.setDate(d.getDate() + (FREQ_DAYS[fr]||30));
-      prochaineEcheance = d.toISOString().split('T')[0];
-    }
+  if (!prochaineEcheance && dernierPassage) {
+    const d = new Date(dernierPassage); d.setDate(d.getDate() + (FREQ_DAYS[frequence]||30));
+    prochaineEcheance = d.toISOString().split('T')[0];
   }
   // Appliquer le décalage jour ouvré
   if (prochaineEcheance) prochaineEcheance = jourOuvreProche(prochaineEcheance);
-  const d={
+
+  const base = {
     tache,
-    equipementId:document.getElementById('peq').value,
-    frequence:document.getElementById('pfr').value,
+    frequence,
     technicien:document.getElementById('pte').value,
-    dernierPassage:document.getElementById('pla').value,
+    dernierPassage,
     prochaineEcheance,
     observations:document.getElementById('pob').value,
     piecesPrevues: window._prevPieces || [],
   };
-  const row = id ? {...S.prev.find(p=>p.id===id), ...d} : {id:uid(), ...d};
-  if (id) S.prev=S.prev.map(p=>p.id===id?row:p);
-  else S.prev=[...S.prev, row];
-  syncSave('prev', row); closeModal(); render();
+
+  if (id) {
+    // Modification : une seule machine via le select
+    const row = {...S.prev.find(p=>p.id===id), ...base, equipementId:document.getElementById('peq').value};
+    S.prev = S.prev.map(p=>p.id===id?row:p);
+    syncSave('prev', row);
+    closeModal(); render();
+    return;
+  }
+
+  // Création : récupérer toutes les machines cochées
+  const checked = Array.from(document.querySelectorAll('.peq-multi:checked')).map(cb => cb.value);
+  if (checked.length === 0) { alert('Cochez au moins une machine'); return; }
+
+  checked.forEach(eqId => {
+    const row = {id:uid(), ...base, equipementId:eqId};
+    S.prev = [...S.prev, row];
+    syncSave('prev', row);
+  });
+  closeModal();
+  showToast(`${checked.length} gamme(s) créée(s)`, C.success);
+  render();
 }
 
 function delPrev(id) {
