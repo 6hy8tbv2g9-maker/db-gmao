@@ -2524,15 +2524,34 @@ async function generateMonthlyReport() {
       columnStyles: { 6: { halign: 'right' } },
     });
     y = doc.lastAutoTable.finalY + 10;
-  }
 
-  // Top machines problématiques
-  const pannesCount = {};
-  correctifs.forEach(o => {
-    pannesCount[o.equipementId] = (pannesCount[o.equipementId]||0) + 1;
-  });
-  const topMachines = Object.entries(pannesCount)
-    .map(([id, n]) => ({ eq: S.eq.find(e=>e.id===id), n }))
+    // Observations détaillées (OT qui en ont)
+    const otsAvecObs = otsMonth.filter(o => (o.observations||'').trim());
+    if (otsAvecObs.length > 0) {
+      if (y > 250) { doc.addPage(); y = 20; }
+      doc.setTextColor(...cText);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.text('Observations / comptes-rendus', 14, y);
+      y += 8;
+      otsAvecObs.forEach(o => {
+        const obsLines = doc.splitTextToSize(o.observations.trim(), 175);
+        const blocH = 8 + obsLines.length * 4.5 + 4;
+        if (y + blocH > 285) { doc.addPage(); y = 20; }
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(...cAccent);
+        doc.text(`${o.numero || '—'} · ${(o.titre||'').slice(0,60)}`, 14, y);
+        y += 5;
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+        doc.setTextColor(...cText);
+        doc.text(obsLines, 16, y);
+        y += obsLines.length * 4.5 + 5;
+      });
+      y += 4;
+    }
+  }
     .filter(x => x.eq)
     .sort((a,b) => b.n - a.n)
     .slice(0, 10);
@@ -2750,6 +2769,33 @@ async function generateDailyReport() {
       columnStyles: { 6: { halign: 'right' } },
     });
     y = doc.lastAutoTable.finalY + 10;
+
+    // Observations détaillées (OT qui en ont)
+    const otsAvecObs = otsToday.filter(o => (o.observations||'').trim());
+    if (otsAvecObs.length > 0) {
+      if (y > 250) { doc.addPage(); y = 20; }
+      doc.setTextColor(...cText);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.text('Observations / comptes-rendus', 14, y);
+      y += 8;
+      otsAvecObs.forEach(o => {
+        const obsLines = doc.splitTextToSize(o.observations.trim(), 175);
+        const blocH = 8 + obsLines.length * 4.5 + 4;
+        if (y + blocH > 285) { doc.addPage(); y = 20; }
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(...cAccent);
+        doc.text(`${o.numero || '—'} · ${(o.titre||'').slice(0,60)}`, 14, y);
+        y += 5;
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+        doc.setTextColor(...cText);
+        doc.text(obsLines, 16, y);
+        y += obsLines.length * 4.5 + 5;
+      });
+      y += 4;
+    }
   } else {
     doc.setFontSize(11);
     doc.setFont('helvetica', 'italic');
