@@ -2375,7 +2375,11 @@ function pgStats() {
 
       <div style="font-size:13px;color:var(--text);margin-bottom:10px;font-weight:600;margin-top:10px">Rapport journalier</div>
       <input class="inp" type="date" id="rpt-jour" value="${today()}" style="margin-bottom:10px"/>
-      <button class="bp" onclick="generateDailyReport()" style="margin-top:0">📥 Télécharger rapport du jour</button>
+      <button class="bp" onclick="generateDailyReport()" style="margin-top:0;margin-bottom:14px">📥 Télécharger rapport du jour</button>
+
+      <div style="font-size:13px;color:var(--text);margin-bottom:10px;font-weight:600;margin-top:10px">État du stock</div>
+      <button class="bp" onclick="generateStockReport(false)" style="margin-top:0;margin-bottom:8px">📦 PDF stock complet</button>
+      <button class="bp" onclick="generateStockReport(true)" style="margin-top:0;background:rgba(217,151,10,.15);border:1px solid rgba(217,151,10,.4);color:${C.warning}">⚠ PDF alertes stock</button>
     </div>
 
     <div class="sp"></div>
@@ -2844,6 +2848,102 @@ async function generateDailyReport() {
   }
 
   const filename = `Rapport_GMAO_${dateStr}.pdf`;
+  doc.save(filename);
+  showToast('Rapport téléchargé !', '#3fb950');
+}
+
+// ═══════════════════════════════════
+// RAPPORT PDF STOCK
+// ═══════════════════════════════════
+async function generateStockReport(alertesOnly) {
+  if (!window.jspdf) { alert('Génération impossible'); return; }
+  showToast('Génération du rapport…', '#58a6ff');
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const cAccent = [232, 151, 10];
+  const cText = [33, 37, 41];
+  const cMuted = [108, 117, 125];
+  const cDanger = [220, 53, 69];
+  const cWarning = [217, 151, 10];
+
+  // Filtrer + trier par désignation A→Z
+  let list = [...S.stock];
+  if (alertesOnly) list = list.filter(s => s.quantite <= s.seuilAlerte);
+  list.sort((a,b) => (a.designation||'').localeCompare(b.designation||'', 'fr'));
+
+  const titre = alertesOnly ? 'STOCK — ALERTES' : 'ÉTAT DU STOCK';
+  const valeurTotale = list.reduce((s,x) => s + (Number(x.quantite)||0) * (Number(x.prixUnitaire)||0), 0);
+
+  // Header
+  doc.setFillColor(...cAccent);
+  doc.rect(0, 0, 210, 30, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text(titre, 14, 14);
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`${list.length} référence(s) · Valeur: ${valeurTotale.toFixed(2)} €`, 14, 22);
+  doc.setFontSize(8);
+  doc.text(`Généré le ${new Date().toLocaleDateString('fr-FR')}`, 150, 22);
+
+  let y = 40;
+
+  if (list.length === 0) {
+    doc.setTextColor(...cMuted);
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'italic');
+    doc.text(alertesOnly ? 'Aucune pièce en alerte. Stock OK !' : 'Aucune pièce en stock.', 14, y);
+  } else {
+    doc.autoTable({
+      startY: y,
+      head: [['Désignation', 'Référence', 'Catégorie', 'Stock', 'Seuil', 'Emplacement', 'Fournisseur', 'PU €']],
+      body: list.map(s => {
+        const alerte = s.quantite <= s.seuilAlerte;
+        return [
+          (s.designation||'').slice(0, 30),
+          s.reference || '—',
+          (s.categorie || '—').slice(0, 15),
+          { content: String(s.quantite), styles: alerte ? { textColor: cDanger, fontStyle: 'bold' } : {} },
+          String(s.seuilAlerte),
+          (s.localisation || '—').slice(0, 15),
+          (s.fournisseur || '—').slice(0, 15),
+          (Number(s.prixUnitaire)||0).toFixed(2),
+        ];
+      }),
+      theme: 'striped',
+      headStyles: { fillColor: cAccent, textColor: 255, fontStyle: 'bold' },
+      styles: { fontSize: 7.5 },
+      margin: { left: 10, right: 10 },
+      columnStyles: { 3: { halign: 'center' }, 4: { halign: 'center' }, 7: { halign: 'right' } },
+    });
+    y = doc.lastAutoTable.finalY + 10;
+
+    // Résumé alertes (si rapport complet)
+    if (!alertesOnly) {
+      const alertes = list.filter(s => s.quantite <= s.seuilAlerte);
+      if (alertes.length > 0) {
+        if (y > 250) { doc.addPage(); y = 20; }
+        doc.setTextColor(...cDanger);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(11);
+        doc.text(`⚠ ${alertes.length} pièce(s) à réapprovisionner`, 14, y);
+      }
+    }
+  }
+
+  // Footer
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(8);
+    doc.setTextColor(...cMuted);
+    doc.text(`GMAO · ${titre}`, 14, 290);
+    doc.text(`Page ${i}/${pageCount}`, 180, 290);
+  }
+
+  const filename = alertesOnly ? `Stock_Alertes_${today()}.pdf` : `Stock_Complet_${today()}.pdf`;
   doc.save(filename);
   showToast('Rapport téléchargé !', '#3fb950');
 }
