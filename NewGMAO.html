@@ -315,9 +315,18 @@ async function doLogin() {
       return;
     }
     currentUser = data.user;
+    restoreAppStructure();
     initApp();
   } catch(e) {
     showLogin('Erreur de connexion');
+  }
+}
+
+// Restaure la structure de base de l'app (détruite par l'écran de login)
+function restoreAppStructure() {
+  const el = document.getElementById('app');
+  if (el) {
+    el.innerHTML = '<div id="sb"></div><div id="content"></div><nav id="nav"></nav>';
   }
 }
 
