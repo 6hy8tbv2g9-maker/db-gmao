@@ -262,6 +262,73 @@ try {
   console.error('Erreur init Supabase:', e);
 }
 
+// ═══════════════════════════════════
+// AUTHENTIFICATION
+// ═══════════════════════════════════
+let currentUser = null;
+
+async function checkAuth() {
+  if (!cloudEnabled) return false;
+  try {
+    const { data } = await sb.auth.getSession();
+    if (data && data.session) {
+      currentUser = data.session.user;
+      return true;
+    }
+  } catch(e) { console.warn('checkAuth:', e); }
+  return false;
+}
+
+function showLogin(errorMsg) {
+  const el = document.getElementById('app');
+  if (!el) return;
+  el.innerHTML = `
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--bg)">
+      <div style="width:100%;max-width:360px">
+        <div style="text-align:center;margin-bottom:30px">
+          <div style="font-size:44px;margin-bottom:10px">⚙️</div>
+          <div style="font-size:24px;font-weight:800;color:var(--accent)">GMAO</div>
+          <div style="font-size:13px;color:var(--muted);margin-top:4px">Connexion requise</div>
+        </div>
+        <div class="card" style="padding:20px">
+          ${errorMsg ? `<div style="background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.35);color:#f85149;padding:10px;border-radius:8px;font-size:13px;margin-bottom:14px">${esc(errorMsg)}</div>` : ''}
+          <div class="fi"><label class="fl">Email</label><input class="inp" type="email" id="login-email" placeholder="votre@email.fr" autocomplete="username"/></div>
+          <div class="fi"><label class="fl">Mot de passe</label><input class="inp" type="password" id="login-pwd" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"/></div>
+          <button class="bp" onclick="doLogin()" id="login-btn">Se connecter</button>
+        </div>
+        <div style="text-align:center;font-size:11px;color:var(--muted);margin-top:16px">Accès réservé · Contactez l'administrateur</div>
+      </div>
+    </div>
+  `;
+}
+
+async function doLogin() {
+  const email = document.getElementById('login-email')?.value.trim();
+  const pwd = document.getElementById('login-pwd')?.value;
+  const btn = document.getElementById('login-btn');
+  if (!email || !pwd) { showLogin('Email et mot de passe requis'); return; }
+  if (btn) { btn.textContent = 'Connexion…'; btn.disabled = true; }
+  try {
+    const { data, error } = await sb.auth.signInWithPassword({ email, password: pwd });
+    if (error) {
+      showLogin('Identifiants incorrects');
+      return;
+    }
+    currentUser = data.user;
+    initApp();
+  } catch(e) {
+    showLogin('Erreur de connexion');
+  }
+}
+
+async function doLogout() {
+  if (!confirm('Se déconnecter ?')) return;
+  try { await sb.auth.signOut(); } catch(e) {}
+  currentUser = null;
+  if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
+  showLogin();
+}
+
 // Mapping camelCase JS ⇄ snake_case DB
 const camelToSnake = {
   equipementId: 'equipement_id',
@@ -3027,6 +3094,15 @@ function pgSettings() {
       </div>
     </div>
 
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">🔒 COMPTE</div>
+    <div class="card">
+      <div style="padding:14px;border-bottom:1px solid var(--border)22">
+        <div style="font-size:13px;font-weight:600">Connecté</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">${currentUser ? esc(currentUser.email) : 'Mode local'}</div>
+      </div>
+      ${currentUser ? `<div style="padding:14px"><button class="bs" onclick="doLogout()" style="width:100%;background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.35);color:#f85149">🚪 Se déconnecter</button></div>` : ''}
+    </div>
+
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">ℹ️ À PROPOS</div>
     <div class="card" style="padding:14px;font-size:12px;color:var(--muted);line-height:1.6">
       <div>GMAO PWA v2.0</div>
@@ -3183,6 +3259,13 @@ async function initApp() {
     }
   } catch (e) {
     console.error('Init:', e);
+    // Si erreur d'authentification, rediriger vers login
+    if (cloudEnabled && e && (e.message||'').toLowerCase().includes('jwt')) {
+      currentUser = null;
+      showLogin('Session expirée, reconnectez-vous');
+      initInProgress = false;
+      return;
+    }
     S.eq = lsLoad('gmao-eq', []);
     S.ots = lsLoad('gmao-ot', []);
     S.prev = lsLoad('gmao-prev', []);
@@ -3197,8 +3280,20 @@ async function initApp() {
   render();
 }
 
-initApp();
-showInstallBanner();
+// Démarrage : vérifier l'authentification avant tout
+async function bootApp() {
+  if (cloudEnabled) {
+    const isAuth = await checkAuth();
+    if (!isAuth) {
+      showLogin();
+      return;
+    }
+  }
+  initApp();
+  showInstallBanner();
+}
+
+bootApp();
 </script>
 </body>
 </html>
