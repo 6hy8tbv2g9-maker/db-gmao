@@ -266,6 +266,22 @@ try {
 // AUTHENTIFICATION
 // ═══════════════════════════════════
 let currentUser = null;
+let currentRole = 'lecteur';
+
+// Récupère le rôle de l'utilisateur connecté
+async function loadRole() {
+  if (!cloudEnabled || !currentUser) { currentRole = 'lecteur'; return; }
+  try {
+    const { data, error } = await sb.from('profils').select('role').eq('id', currentUser.id).single();
+    if (!error && data) currentRole = data.role || 'lecteur';
+    else currentRole = 'lecteur';
+  } catch(e) { currentRole = 'lecteur'; }
+}
+
+// Helpers de permission
+const canWrite = () => ['technicien','manager'].includes(currentRole);
+const canManage = () => currentRole === 'manager';
+const canDelete = () => currentRole === 'manager';
 
 async function checkAuth() {
   if (!cloudEnabled) return false;
@@ -273,6 +289,7 @@ async function checkAuth() {
     const { data } = await sb.auth.getSession();
     if (data && data.session) {
       currentUser = data.session.user;
+      await loadRole();
       return true;
     }
   } catch(e) { console.warn('checkAuth:', e); }
@@ -315,6 +332,7 @@ async function doLogin() {
       return;
     }
     currentUser = data.user;
+    await loadRole();
     restoreAppStructure();
     initApp();
   } catch(e) {
@@ -704,7 +722,7 @@ function pgEquipements() {
     </div>`}
 
     <div class="sp"></div>
-    <button class="fab" onclick="modalEq(null)">+</button>`;
+    ${canWrite()?`<button class="fab" onclick="modalEq(null)">+</button>`:""}`;
 }
 
 function modalEq(id) {
@@ -747,7 +765,7 @@ function modalEq(id) {
       <div class="fi"><label class="fl">Date MAJ</label><input class="inp" type="date" id="ed" value="${f.dateMAJ||''}"/></div>
       <div class="fi"><label class="fl">Observations</label><textarea class="ta" id="eo">${esc(f.observations)}</textarea></div>
       ${!isN?`<hr style="border:none;border-top:1px solid var(--border);margin:14px 0">${renderDocsSection('eq', eq.id)}`:`<div style="font-size:11px;color:var(--muted);font-style:italic;margin:12px 0;padding:10px;background:var(--bg);border-radius:8px">💡 Enregistrez la machine pour ajouter des documents.</div>`}
-      ${!isN?`<button class="bd" onclick="delEq('${eq.id}')" style="margin-top:14px">Supprimer cet équipement</button>`:''}
+      ${(!isN && canDelete())?`<button class="bd" onclick="delEq('${eq.id}')" style="margin-top:14px">Supprimer cet équipement</button>`:''}
       <button class="bp" onclick="saveEq('${isN?'':eq.id}')">${isN?'Créer l\'équipement':'Enregistrer'}</button>
     </div>`);
 }
@@ -1056,6 +1074,7 @@ function showScanResult(eq) {
         </div>` : ''}
       <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;margin-bottom:8px">Que voulez-vous faire ?</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        ${canWrite() ? `
         <button onclick="closeModal();quickPanne('${eq.id}')" style="background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.35);color:${C.danger};font-size:13px;font-weight:700;padding:13px 8px;border-radius:10px;cursor:pointer;font-family:-apple-system,sans-serif;text-align:center">
           🔧<br>Déclarer panne
         </button>
@@ -1065,11 +1084,12 @@ function showScanResult(eq) {
         <button onclick="closeModal();quickPreventif('${eq.id}')" style="background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.35);color:${C.success};font-size:13px;font-weight:700;padding:13px 8px;border-radius:10px;cursor:pointer;font-family:-apple-system,sans-serif;text-align:center">
           ✅<br>Valider préventif
         </button>
-        <button onclick="closeModal();showHistorique('${eq.id}')" style="background:rgba(88,166,255,.12);border:1px solid rgba(88,166,255,.35);color:${C.info};font-size:13px;font-weight:700;padding:13px 8px;border-radius:10px;cursor:pointer;font-family:-apple-system,sans-serif;text-align:center">
+        ` : ''}
+        <button onclick="closeModal();showHistorique('${eq.id}')" style="background:rgba(88,166,255,.12);border:1px solid rgba(88,166,255,.35);color:${C.info};font-size:13px;font-weight:700;padding:13px 8px;border-radius:10px;cursor:pointer;font-family:-apple-system,sans-serif;text-align:center${canWrite()?'':';grid-column:span 2'}">
           📋<br>Historique
         </button>
         <button onclick="closeModal();modalEq('${eq.id}')" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:13px 8px;border-radius:10px;cursor:pointer;font-family:-apple-system,sans-serif;text-align:center;grid-column:span 2">
-          ✏️<br>Modifier fiche
+          ${canWrite()?'✏️<br>Modifier fiche':'👁<br>Voir la fiche'}
         </button>
       </div>
     </div>`;
@@ -1394,7 +1414,7 @@ function pgOTs() {
       }).join('')}
     </div>`}
     <div class="sp"></div>
-    <button class="fab" onclick="modalOT(null)">+</button>`;
+    ${canWrite()?`<button class="fab" onclick="modalOT(null)">+</button>`:""}`;
 }
 
 function modalOT(id) {
@@ -1479,7 +1499,7 @@ function modalOT(id) {
       <div class="fi"><label class="fl">Description</label><textarea class="ta" id="otdes">${esc(f.description)}</textarea></div>
       <div class="fi"><label class="fl">Observations</label><textarea class="ta" id="otob">${esc(f.observations)}</textarea></div>
       ${!isN ? `<hr style="border:none;border-top:1px solid var(--border);margin:14px 0">${renderDocsSection('ot', ot.id)}` : ''}
-      ${!isN?`<button class="bd" onclick="delOT('${ot.id}')" style="margin-top:14px">Supprimer cet OT</button>`:''}
+      ${(!isN && canDelete())?`<button class="bd" onclick="delOT('${ot.id}')" style="margin-top:14px">Supprimer cet OT</button>`:''}
       <button class="bp" onclick="saveOT('${isN?'':ot.id}')">${isN?'Créer l\'OT':'Enregistrer'}</button>
     </div>`);
 }
@@ -1867,7 +1887,7 @@ function pgPreventif() {
       }).join('')}
     </div>`}
     <div class="sp"></div>
-    <button class="fab" onclick="modalPrev(null)">+</button>`;
+    ${canWrite()?`<button class="fab" onclick="modalPrev(null)">+</button>`:""}`;
 }
 
 function marquerFait(id) {
@@ -1944,7 +1964,7 @@ function modalPrev(id) {
 
       <hr style="border:none;border-top:1px solid var(--border);margin:14px 0">
       <div class="fi"><label class="fl">Observations</label><textarea class="ta" id="pob">${esc(f.observations)}</textarea></div>
-      ${!isN?`<button class="bd" onclick="delPrev('${p.id}')">Supprimer cette gamme</button>`:''}
+      ${(!isN && canDelete())?`<button class="bd" onclick="delPrev('${p.id}')">Supprimer cette gamme</button>`:''}
       <button class="bp" onclick="savePrev('${isN?'':p.id}')">${isN?'Créer la gamme':'Enregistrer'}</button>
     </div>`);
   // Mémoriser piecesPrevues actuelles
@@ -2142,7 +2162,7 @@ function pgStock() {
       }).join('')}
     </div>`}
     <div class="sp"></div>
-    <button class="fab" onclick="modalSt(null)">+</button>`;
+    ${canWrite()?`<button class="fab" onclick="modalSt(null)">+</button>`:""}`;
 }
 
 function adjStock(id, delta) {
@@ -2179,7 +2199,7 @@ function modalSt(id) {
         <div class="fi"><label class="fl">PU (€)</label><input class="inp" type="number" min="0" step="0.01" id="sp" value="${f.prixUnitaire}"/></div>
       </div>
       <div class="fi"><label class="fl">Observations</label><textarea class="ta" id="so">${esc(f.observations)}</textarea></div>
-      ${!isN?`<button class="bd" onclick="delSt('${s.id}')">Supprimer cette pièce</button>`:''}
+      ${(!isN && canDelete())?`<button class="bd" onclick="delSt('${s.id}')">Supprimer cette pièce</button>`:''}
       <button class="bp" onclick="saveSt('${isN?'':s.id}')">${isN?'Ajouter au stock':'Enregistrer'}</button>
     </div>`);
 }
@@ -3037,6 +3057,7 @@ function pgSettings() {
       <div><div class="pt">Réglages</div><div class="ps">Paramètres de l'application</div></div>
     </div>
 
+    ${canManage() ? `
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:14px 14px 8px">⚙️ PARAMÈTRES GÉNÉRAUX</div>
     <div class="card" style="padding:14px">
       <div class="fi">
@@ -3048,6 +3069,7 @@ function pgSettings() {
         <div style="font-size:11px;color:var(--muted);margin-top:6px">Utilisé pour calculer automatiquement le coût main d'œuvre des OT</div>
       </div>
     </div>
+    ` : ''}
 
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">☁️ SYNCHRONISATION</div>
     <div class="card">
@@ -3067,6 +3089,7 @@ function pgSettings() {
       </div>
     </div>
 
+    ${canManage() ? `
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">📅 INDISPONIBILITÉS</div>
     <div class="card">
       <div style="padding:14px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border)22">
@@ -3087,6 +3110,7 @@ function pgSettings() {
         <button class="bs" onclick="addIndispModal()" style="width:100%;background:rgba(232,151,10,.12);border:1px solid rgba(232,151,10,.35);color:${C.accent}">+ Ajouter une indisponibilité</button>
       </div>
     </div>
+    ` : ''}
 
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">📊 DONNÉES</div>
     <div class="card">
@@ -3108,6 +3132,7 @@ function pgSettings() {
       <div style="padding:14px;border-bottom:1px solid var(--border)22">
         <div style="font-size:13px;font-weight:600">Connecté</div>
         <div style="font-size:12px;color:var(--muted);margin-top:2px">${currentUser ? esc(currentUser.email) : 'Mode local'}</div>
+        <div style="margin-top:6px"><span style="display:inline-block;background:rgba(232,151,10,.15);border:1px solid rgba(232,151,10,.4);color:${C.accent};font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;text-transform:uppercase;letter-spacing:.05em">${currentRole}</span></div>
       </div>
       ${currentUser ? `<div style="padding:14px"><button class="bs" onclick="doLogout()" style="width:100%;background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.35);color:#f85149">🚪 Se déconnecter</button></div>` : ''}
     </div>
