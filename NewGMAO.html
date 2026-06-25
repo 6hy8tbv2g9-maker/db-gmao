@@ -1757,8 +1757,6 @@ async function uploadFile(file, parentType, parentId) {
     showToast('Erreur upload: ' + upErr.message, '#f85149');
     return null;
   }
-  // URL publique
-  const { data: urlData } = sb.storage.from(BUCKET).getPublicUrl(path);
   const doc = {
     id: uid(),
     parentType,
@@ -1766,7 +1764,7 @@ async function uploadFile(file, parentType, parentId) {
     nom: file.name,
     typeFichier: file.type || ext,
     taille: file.size,
-    url: urlData.publicUrl,
+    url: '',
     storagePath: path,
     dateAjout: today(),
   };
@@ -1774,6 +1772,19 @@ async function uploadFile(file, parentType, parentId) {
   await syncSave('docs', doc);
   showToast('Document ajouté', '#3fb950');
   return doc;
+}
+
+// Ouvre un document via une URL signée temporaire (valable 1h)
+async function openDoc(storagePath) {
+  if (!cloudEnabled || !storagePath) { alert('Document indisponible'); return; }
+  showToast('Ouverture…', '#58a6ff');
+  try {
+    const { data, error } = await sb.storage.from(BUCKET).createSignedUrl(storagePath, 3600);
+    if (error || !data) { alert('Impossible d\'ouvrir ce document'); return; }
+    window.open(data.signedUrl, '_blank');
+  } catch(e) {
+    alert('Erreur d\'ouverture');
+  }
 }
 
 async function deleteDoc(docId) {
@@ -1818,8 +1829,8 @@ function renderDocsSection(parentType, parentId) {
             <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.nom)}</div>
             <div style="font-size:11px;color:var(--muted)">${fmtSize(d.taille||0)} · ${fmt(d.dateAjout)}</div>
           </div>
-          <a href="${d.url}" target="_blank" rel="noopener" style="background:rgba(88,166,255,.12);border:1px solid rgba(88,166,255,.35);color:${C.info};font-size:11px;padding:5px 10px;border-radius:6px;text-decoration:none;font-weight:600">Ouvrir</a>
-          <button onclick="onDeleteDoc('${d.id}','${parentType}','${parentId}')" style="background:transparent;border:1px solid ${C.danger}44;color:${C.danger};font-size:11px;padding:5px 9px;border-radius:6px;cursor:pointer">✕</button>
+          <button onclick="openDoc('${d.storagePath}')" style="background:rgba(88,166,255,.12);border:1px solid rgba(88,166,255,.35);color:${C.info};font-size:11px;padding:5px 10px;border-radius:6px;cursor:pointer;font-weight:600;font-family:-apple-system,sans-serif">Ouvrir</button>
+          ${canDelete()?`<button onclick="onDeleteDoc('${d.id}','${parentType}','${parentId}')" style="background:transparent;border:1px solid ${C.danger}44;color:${C.danger};font-size:11px;padding:5px 9px;border-radius:6px;cursor:pointer">✕</button>`:''}
         </div>`).join('');
   return `
     <div id="docs-section-${parentType}-${parentId}">
@@ -1827,8 +1838,10 @@ function renderDocsSection(parentType, parentId) {
         <span>📎 DOCUMENTS (${list.length})</span>
       </div>
       <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:10px">${rows}</div>
+      ${canWrite() ? `
       <input type="file" id="file-input-${parentType}-${parentId}" style="display:none" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" onchange="onFilePicked(event,'${parentType}','${parentId}')"/>
       <button onclick="document.getElementById('file-input-${parentType}-${parentId}').click()" style="background:rgba(232,151,10,.12);border:1px solid rgba(232,151,10,.35);color:${C.accent};font-size:13px;font-weight:700;padding:9px;border-radius:8px;cursor:pointer;width:100%;font-family:-apple-system,sans-serif">+ Ajouter un document</button>
+      ` : ''}
     </div>
   `;
 }
