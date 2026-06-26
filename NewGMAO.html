@@ -9,6 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="GMAO">
   <meta name="theme-color" content="#0d1117">
+  <link rel="manifest" href="./manifest.json">
 
   <!-- Icône home screen (SVG en data URI) -->
   <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%230d1117'/%3E%3Ctext x='90' y='120' text-anchor='middle' font-family='system-ui' font-weight='700' font-size='72' fill='%23e8970a'%3E⚙%3C/text%3E%3C/svg%3E">
@@ -665,6 +666,103 @@ async function confirmResetPassword() {
   }
 }
 
+// ═══════════════════════════════════
+// NOTIFICATIONS PUSH
+// ═══════════════════════════════════
+const VAPID_PUBLIC_KEY = 'BFO6zNSEyxr8u9q8UpGI-yYsb86SrlflcMDD9wp9C4XvaaAr-tn-KLdbPePfImqJUT8vEwWvFuQscK51Wigmj0w';
+let swRegistration = null;
+let pushOn = false;
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  const arr = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) arr[i] = rawData.charCodeAt(i);
+  return arr;
+}
+
+async function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return null;
+  try {
+    swRegistration = await navigator.serviceWorker.register('./sw.js');
+    return swRegistration;
+  } catch (e) { console.warn('SW register:', e); return null; }
+}
+
+const pushSupported = () => ('serviceWorker' in navigator) && ('PushManager' in window) && ('Notification' in window);
+const isStandalonePWA = () => window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
+
+async function isPushSubscribed() {
+  if (!swRegistration) return false;
+  try { return !!(await swRegistration.pushManager.getSubscription()); }
+  catch(e) { return false; }
+}
+
+async function enablePush() {
+  if (!pushSupported()) { alert("Ton appareil ou navigateur ne supporte pas les notifications push."); return; }
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  if (isIOS && !isStandalonePWA()) {
+    alert("Sur iPhone : installe d'abord l'app sur l'écran d'accueil (bouton Partager → Sur l'écran d'accueil), ouvre-la depuis l'icône, puis réessaie ici.");
+    return;
+  }
+  try {
+    if (!swRegistration) await registerServiceWorker();
+    if (!swRegistration) { alert("Service worker indisponible."); return; }
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { alert("Notifications refusées. Tu peux les réautoriser dans les réglages de ton téléphone."); return; }
+    const sub = await swRegistration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+    });
+    const j = sub.toJSON();
+    const row = { user_id: currentUser.id, endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth };
+    await sb.from('push_subscriptions').delete().eq('endpoint', j.endpoint);
+    const { error } = await sb.from('push_subscriptions').insert(row);
+    if (error) { alert('Erreur enregistrement: ' + error.message); return; }
+    pushOn = true;
+    showToast('Notifications activées', C.success);
+    render();
+  } catch(e) { alert("Erreur lors de l'activation: " + e.message); }
+}
+
+async function disablePush() {
+  try {
+    if (!swRegistration) await registerServiceWorker();
+    const sub = swRegistration ? await swRegistration.pushManager.getSubscription() : null;
+    if (sub) {
+      const endpoint = sub.endpoint;
+      await sub.unsubscribe();
+      if (cloudEnabled && currentUser) await sb.from('push_subscriptions').delete().eq('endpoint', endpoint);
+    }
+    pushOn = false;
+    showToast('Notifications désactivées', C.success);
+    render();
+  } catch(e) { alert("Erreur: " + e.message); }
+}
+
+// Déclenche l'envoi d'une notification push à la création d'un OT (non bloquant)
+async function notifyNewOT(ot) {
+  if (!cloudEnabled || !ot) return;
+  try {
+    const eq = S.eq.find(e => e.id === ot.equipementId);
+    const { data } = await sb.auth.getSession();
+    const token = data?.session?.access_token;
+    if (!token) return;
+    await fetch(`${SUPABASE_URL}/functions/v1/notify-ot`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({
+        numero: ot.numero || '',
+        titre: ot.titre || '',
+        machine: eq?.nom || '',
+        site: eq?.site || '',
+        priorite: ot.priorite || '',
+      }),
+    });
+  } catch(e) { /* silencieux : ne jamais bloquer la création d'un OT */ }
+}
+
 // Mapping camelCase JS ⇄ snake_case DB
 const camelToSnake = {
   equipementId: 'equipement_id',
@@ -910,6 +1008,13 @@ function render() {
   if (wasFocused && focusedId) {
     const el = document.getElementById(focusedId);
     if (el) { el.focus(); el.setSelectionRange && el.setSelectionRange(el.value.length,el.value.length); }
+  }
+
+  // Met à jour l'état des notifications push sur la page Réglages
+  if (S.page === 'settings' && pushSupported()) {
+    isPushSubscribed().then(on => {
+      if (on !== pushOn) { pushOn = on; render(); }
+    });
   }
 }
 
@@ -1871,7 +1976,7 @@ function saveOT(id) {
   };
   const row = id ? {...S.ots.find(o=>o.id===id), ...d} : {id:uid(), numero:nextOT(S.ots), dateCreation:today(), ...d};
   if (id) S.ots=S.ots.map(o=>o.id===id?row:o);
-  else S.ots=[...S.ots, row];
+  else { S.ots=[...S.ots, row]; notifyNewOT(row); }
   syncSave('ots', row);
   // Si création : déplacer les pièces temporaires vers l'OT créé
   if (!id && window._tmpPieces && window._tmpPieces.length > 0) {
@@ -3518,6 +3623,20 @@ function pgSettings() {
             : `<button class="bs" onclick="setPinModal()" style="width:100%;background:rgba(232,151,10,.12);border:1px solid rgba(232,151,10,.35);color:${C.accent}">Activer le code PIN</button>`}
         </div>
       </div>
+      <div style="padding:14px;border-bottom:1px solid var(--border)22">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div style="font-size:13px;font-weight:600">🔔 Notifications push</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px">${pushOn ? 'Activées · alerte à chaque nouvel OT' : 'Recevoir une alerte à chaque nouvel OT créé'}</div>
+          </div>
+          <span style="font-size:18px">${pushOn ? '✅' : '⚪'}</span>
+        </div>
+        <div style="margin-top:10px">
+          ${pushOn
+            ? `<button class="bs" onclick="disablePush()" style="width:100%;color:${C.danger}">Désactiver les notifications</button>`
+            : `<button class="bs" onclick="enablePush()" style="width:100%;background:rgba(232,151,10,.12);border:1px solid rgba(232,151,10,.35);color:${C.accent}">Activer les notifications</button>`}
+        </div>
+      </div>
       ${currentUser ? `<div style="padding:14px;display:flex;flex-direction:column;gap:8px">
         <button class="bs" onclick="changePasswordModal()" style="width:100%">🔑 Changer mon mot de passe</button>
         <button class="bs" onclick="doLogout()" style="width:100%;background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.35);color:#f85149">🚪 Se déconnecter</button>
@@ -3703,6 +3822,7 @@ async function initApp() {
 
 // Démarrage : vérifier l'authentification avant tout
 async function bootApp() {
+  registerServiceWorker();
   if (cloudEnabled) {
     // Détecter si on arrive depuis un lien de réinitialisation de mot de passe
     const isRecovery = await checkPasswordRecovery();
