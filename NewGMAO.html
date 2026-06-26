@@ -231,6 +231,7 @@ const nextOT = ots => {
 };
 
 const FREQ_DAYS = {hebdomadaire:7,mensuel:30,trimestriel:90,semestriel:182,annuel:365};
+const SITES = ['Brasserie','Conditionnement','Prépa','Salem'];
 
 // ═══════════════════════════════════
 // QR
@@ -809,6 +810,7 @@ const S = {
   eq: [], ots: [], prev: [], stock: [], otPieces: [], settings: [], docs: [], indisp: [],
   search:{eq:'',ots:'',prev:'',stock:''},
   otFilter:'all',
+  prevSite:'all',
   statsPeriod: '30',  // jours
   loading: true,
   online: navigator.onLine,
@@ -1036,7 +1038,7 @@ function pgEquipements() {
 function modalEq(id) {
   const eq = id ? S.eq.find(e=>e.id===id) : null;
   const isN = !eq;
-  const f = eq?{...eq}:{nom:'',type:'mécanique',localisation:'',statut:'en service',dateMAJ:today(),observations:''};
+  const f = eq?{...eq}:{nom:'',type:'mécanique',site:'',localisation:'',statut:'en service',dateMAJ:today(),observations:''};
 
   openModal(`
     <div class="mh"></div>
@@ -1069,7 +1071,11 @@ function modalEq(id) {
           ${['en service','en panne','en maintenance','hors service'].map(s=>`<option ${f.statut===s?'selected':''}>${s}</option>`).join('')}
         </select></div>
       </div>
-      <div class="fi"><label class="fl">Localisation</label><input class="inp" id="el" value="${esc(f.localisation)}" placeholder="Ex: Atelier A"/></div>
+      <div class="fi"><label class="fl">Site *</label><select class="sel" id="esite">
+        <option value="">— Choisir un site —</option>
+        ${SITES.map(s=>`<option ${f.site===s?'selected':''}>${s}</option>`).join('')}
+      </select></div>
+      <div class="fi"><label class="fl">Localisation précise</label><input class="inp" id="el" value="${esc(f.localisation)}" placeholder="Ex: ligne 2, près de la cuve 3"/></div>
       <div class="fi"><label class="fl">Date MAJ</label><input class="inp" type="date" id="ed" value="${f.dateMAJ||''}"/></div>
       <div class="fi"><label class="fl">Observations</label><textarea class="ta" id="eo">${esc(f.observations)}</textarea></div>
       ${!isN?`<hr style="border:none;border-top:1px solid var(--border);margin:14px 0">${renderDocsSection('eq', eq.id)}`:`<div style="font-size:11px;color:var(--muted);font-style:italic;margin:12px 0;padding:10px;background:var(--bg);border-radius:8px">💡 Enregistrez la machine pour ajouter des documents.</div>`}
@@ -1081,7 +1087,7 @@ function modalEq(id) {
 function saveEq(id) {
   const nom = document.getElementById('en').value.trim();
   if (!nom) { alert('Désignation obligatoire'); return; }
-  const d = {nom,type:document.getElementById('et').value,statut:document.getElementById('es').value,localisation:document.getElementById('el').value,dateMAJ:document.getElementById('ed').value,observations:document.getElementById('eo').value};
+  const d = {nom,type:document.getElementById('et').value,statut:document.getElementById('es').value,site:document.getElementById('esite').value,localisation:document.getElementById('el').value,dateMAJ:document.getElementById('ed').value,observations:document.getElementById('eo').value};
   const row = id ? {...S.eq.find(e=>e.id===id), ...d} : {id:uid(), ...d};
   if (id) S.eq=S.eq.map(e=>e.id===id?row:e);
   else S.eq=[...S.eq, row];
@@ -2177,17 +2183,37 @@ async function onDeleteDoc(docId, parentType, parentId) {
 // ═══════════════════════════════════
 function pgPreventif() {
   const q=S.search.prev.toLowerCase();
+  const site=S.prevSite;
   const list=[...S.prev].filter(p=>{
     const eq=S.eq.find(e=>e.id===p.equipementId);
-    return p.tache.toLowerCase().includes(q)||eq?.nom.toLowerCase().includes(q);
+    const matchSearch = p.tache.toLowerCase().includes(q)||eq?.nom.toLowerCase().includes(q);
+    const matchSite = site==='all' || (eq?.site===site);
+    return matchSearch && matchSite;
   }).sort((a,b)=>new Date(a.prochaineEcheance)-new Date(b.prochaineEcheance));
+
+  // Compteur par site (gammes à venir, tous statuts)
+  const countSite = (st) => S.prev.filter(p=>{
+    const eq=S.eq.find(e=>e.id===p.equipementId);
+    return st==='all' ? true : eq?.site===st;
+  }).length;
+
+  const filterBtns = [['all','Tous'],...SITES.map(s=>[s,s])].map(([val,lbl])=>{
+    const on = site===val;
+    const n = countSite(val);
+    return `<button onclick="S.prevSite='${val.replace(/'/g,"\\'")}';render()" style="
+      flex-shrink:0;padding:7px 14px;border-radius:20px;font-size:12px;font-weight:700;cursor:pointer;
+      font-family:-apple-system,sans-serif;white-space:nowrap;border:1px solid ${on?C.accent:'var(--border)'};
+      background:${on?'rgba(232,151,10,.15)':'var(--surface2)'};color:${on?C.accent:'var(--muted)'}">
+      ${esc(lbl)}${n>0?` <span style="opacity:.7">${n}</span>`:''}</button>`;
+  }).join('');
 
   return `
     <div class="ph">
-      <div><div class="pt">Plan Préventif</div><div class="ps">${list.length} gamme(s)</div></div>
+      <div><div class="pt">Plan Préventif</div><div class="ps">${list.length} gamme(s)${site!=='all'?` · ${esc(site)}`:''}</div></div>
     </div>
+    <div style="display:flex;gap:8px;overflow-x:auto;padding:4px 2px 10px;-webkit-overflow-scrolling:touch">${filterBtns}</div>
     <div class="sc"><input id="pv-search" class="si" placeholder="Rechercher…" value="${esc(S.search.prev)}" oninput="S.search.prev=this.value;render()"/></div>
-    ${list.length===0?`<div class="empty"><div class="empty-i">📅</div><div>Aucune gamme préventive</div></div>`:`
+    ${list.length===0?`<div class="empty"><div class="empty-i">📅</div><div>${site==='all'?'Aucune gamme préventive':`Aucune gamme pour ${esc(site)}`}</div></div>`:`
     <div class="card" style="margin-top:10px">
       ${list.map(p=>{
         const eq=S.eq.find(e=>e.id===p.equipementId);
@@ -2196,7 +2222,7 @@ function pgPreventif() {
         return `<div class="ci" onclick="modalPrev('${p.id}')">
           <div style="flex:1;min-width:0">
             <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.tache)}</div>
-            <div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(eq?.nom||'—')}</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(eq?.nom||'—')}${eq?.site?` · ${esc(eq.site)}`:''}</div>
             <div style="margin-top:5px">${badge(p.frequence,C.info)}</div>
           </div>
           <div style="text-align:right;flex-shrink:0;margin-left:10px">
@@ -2217,6 +2243,15 @@ function marquerFait(id) {
   const updated = {...p, dernierPassage:today(), prochaineEcheance:d.toISOString().split('T')[0]};
   S.prev=S.prev.map(x=>x.id===id?updated:x);
   syncSave('prev', updated); render();
+}
+
+// Coche/décoche toutes les machines d'un site dans la modale de gamme préventive
+function togglePrevSite(btn) {
+  const site = btn.getAttribute('data-site');
+  const boxes = [...document.querySelectorAll(`.peq-multi[data-site="${CSS.escape(site)}"]`)];
+  const allChecked = boxes.every(b=>b.checked);
+  boxes.forEach(b=>b.checked = !allChecked);
+  btn.textContent = allChecked ? 'Tout cocher' : 'Tout décocher';
 }
 
 function modalPrev(id) {
@@ -2251,13 +2286,27 @@ function modalPrev(id) {
       ${isN ? `
       <div class="fi">
         <label class="fl">Machines * (cochez une ou plusieurs)</label>
-        <div style="border:1px solid var(--border);border-radius:10px;max-height:200px;overflow-y:auto;background:var(--bg)">
-          ${S.eq.length === 0 ? `<div style="padding:12px;color:var(--muted);font-size:12px">Aucune machine</div>` : S.eq.map(e=>`
-            <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border)22;cursor:pointer">
-              <input type="checkbox" class="peq-multi" value="${e.id}" style="width:18px;height:18px;accent-color:${C.accent}"/>
-              <span style="font-size:13px">${esc(e.nom)}${e.localisation?` <span style="color:var(--muted);font-size:11px">· ${esc(e.localisation)}</span>`:''}</span>
-            </label>
-          `).join('')}
+        <div style="border:1px solid var(--border);border-radius:10px;max-height:240px;overflow-y:auto;background:var(--bg)">
+          ${S.eq.length === 0 ? `<div style="padding:12px;color:var(--muted);font-size:12px">Aucune machine</div>` : (()=>{
+            const groups = [...SITES, ''];
+            return groups.map(st=>{
+              const machines = S.eq.filter(e=>(e.site||'')===st);
+              if (machines.length===0) return '';
+              const label = st || 'Sans site';
+              return `
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;background:var(--surface2);border-bottom:1px solid var(--border)22;position:sticky;top:0">
+                  <span style="font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.05em">${esc(label)}</span>
+                  <button type="button" onclick="togglePrevSite(this)" data-site="${esc(label)}" style="background:transparent;border:1px solid var(--border);color:var(--muted);font-size:10px;padding:3px 8px;border-radius:6px;cursor:pointer">Tout cocher</button>
+                </div>
+                ${machines.map(e=>`
+                  <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border)22;cursor:pointer">
+                    <input type="checkbox" class="peq-multi" value="${e.id}" data-site="${esc(label)}" style="width:18px;height:18px;accent-color:${C.accent}"/>
+                    <span style="font-size:13px">${esc(e.nom)}${e.localisation?` <span style="color:var(--muted);font-size:11px">· ${esc(e.localisation)}</span>`:''}</span>
+                  </label>
+                `).join('')}
+              `;
+            }).join('');
+          })()}
         </div>
       </div>
       ` : `
