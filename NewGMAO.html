@@ -312,6 +312,7 @@ function showLogin(errorMsg) {
           <div class="fi"><label class="fl">Email</label><input class="inp" type="email" id="login-email" placeholder="votre@email.fr" autocomplete="username"/></div>
           <div class="fi"><label class="fl">Mot de passe</label><input class="inp" type="password" id="login-pwd" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"/></div>
           <button class="bp" onclick="doLogin()" id="login-btn">Se connecter</button>
+          <div style="text-align:center;margin-top:14px"><button onclick="forgotPasswordModal()" style="background:none;border:none;color:${C.info};font-size:13px;cursor:pointer;text-decoration:underline;font-family:-apple-system,sans-serif">Mot de passe oublié ?</button></div>
         </div>
         <div style="text-align:center;font-size:11px;color:var(--muted);margin-top:16px">Accès réservé · Contactez l'administrateur</div>
       </div>
@@ -529,6 +530,138 @@ async function disablePinFromModal() {
   closeModal();
   showToast('Code PIN désactivé', C.success);
   render();
+}
+
+// Changement de mot de passe (utilisateur connecté)
+function changePasswordModal() {
+  openModal(`
+    <div class="mh"></div>
+    <div class="mhd"><span class="mt">🔑 Changer mon mot de passe</span><button class="mc" onclick="closeModal()">×</button></div>
+    <div class="mb">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Choisissez un nouveau mot de passe (8 caractères minimum).</div>
+      <div class="fi"><label class="fl">Nouveau mot de passe</label><input class="inp" type="password" id="np-1" placeholder="••••••••" autocomplete="new-password"/></div>
+      <div class="fi"><label class="fl">Confirmer</label><input class="inp" type="password" id="np-2" placeholder="••••••••" autocomplete="new-password"/></div>
+      <button class="bp" onclick="saveNewPassword()" id="np-btn">Changer le mot de passe</button>
+    </div>
+  `);
+}
+
+async function saveNewPassword() {
+  const p1 = document.getElementById('np-1')?.value;
+  const p2 = document.getElementById('np-2')?.value;
+  const btn = document.getElementById('np-btn');
+  if (!p1 || p1.length < 8) { alert('Le mot de passe doit faire au moins 8 caractères'); return; }
+  if (p1 !== p2) { alert('Les deux mots de passe ne correspondent pas'); return; }
+  if (btn) { btn.textContent = 'Modification…'; btn.disabled = true; }
+  try {
+    const { error } = await sb.auth.updateUser({ password: p1 });
+    if (error) { alert('Erreur : ' + error.message); if(btn){btn.textContent='Changer le mot de passe';btn.disabled=false;} return; }
+    closeModal();
+    showToast('Mot de passe modifié', C.success);
+  } catch(e) {
+    alert('Erreur lors du changement');
+    if(btn){btn.textContent='Changer le mot de passe';btn.disabled=false;}
+  }
+}
+
+// Mot de passe oublié
+function forgotPasswordModal() {
+  const el = document.getElementById('app');
+  if (!el) return;
+  el.innerHTML = `
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--bg)">
+      <div style="width:100%;max-width:360px">
+        <div style="text-align:center;margin-bottom:24px">
+          <div style="font-size:40px;margin-bottom:10px">🔑</div>
+          <div style="font-size:20px;font-weight:800;color:var(--accent)">Réinitialiser le mot de passe</div>
+        </div>
+        <div class="card" style="padding:20px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Entrez votre email. Vous recevrez un lien pour définir un nouveau mot de passe.</div>
+          <div class="fi"><label class="fl">Email</label><input class="inp" type="email" id="forgot-email" placeholder="votre@email.fr"/></div>
+          <button class="bp" onclick="sendResetEmail()" id="forgot-btn">Envoyer le lien</button>
+          <div style="text-align:center;margin-top:14px"><button onclick="showLogin()" style="background:none;border:none;color:var(--muted);font-size:13px;cursor:pointer;font-family:-apple-system,sans-serif">← Retour</button></div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function sendResetEmail() {
+  const email = document.getElementById('forgot-email')?.value.trim();
+  const btn = document.getElementById('forgot-btn');
+  if (!email) { alert('Entrez votre email'); return; }
+  if (btn) { btn.textContent = 'Envoi…'; btn.disabled = true; }
+  try {
+    const { error } = await sb.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.href.split('#')[0]
+    });
+    if (error) { alert('Erreur : ' + error.message); if(btn){btn.textContent='Envoyer le lien';btn.disabled=false;} return; }
+    const el = document.getElementById('app');
+    if (el) el.innerHTML = `
+      <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--bg)">
+        <div style="width:100%;max-width:360px;text-align:center">
+          <div style="font-size:44px;margin-bottom:14px">📧</div>
+          <div style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:10px">Email envoyé !</div>
+          <div style="font-size:13px;color:var(--muted);margin-bottom:24px">Si un compte existe pour ${esc(email)}, vous recevrez un lien de réinitialisation. Pensez à vérifier vos spams.</div>
+          <button class="bp" onclick="showLogin()">Retour à la connexion</button>
+        </div>
+      </div>
+    `;
+  } catch(e) {
+    alert('Erreur lors de l\'envoi');
+    if(btn){btn.textContent='Envoyer le lien';btn.disabled=false;}
+  }
+}
+
+// Détecte si on arrive depuis un lien de réinitialisation
+async function checkPasswordRecovery() {
+  if (!cloudEnabled) return false;
+  const hash = window.location.hash;
+  if (hash && hash.includes('type=recovery')) {
+    showResetPasswordScreen();
+    return true;
+  }
+  return false;
+}
+
+function showResetPasswordScreen() {
+  const el = document.getElementById('app');
+  if (!el) return;
+  el.innerHTML = `
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--bg)">
+      <div style="width:100%;max-width:360px">
+        <div style="text-align:center;margin-bottom:24px">
+          <div style="font-size:40px;margin-bottom:10px">🔑</div>
+          <div style="font-size:20px;font-weight:800;color:var(--accent)">Nouveau mot de passe</div>
+        </div>
+        <div class="card" style="padding:20px">
+          <div class="fi"><label class="fl">Nouveau mot de passe</label><input class="inp" type="password" id="reset-1" placeholder="••••••••"/></div>
+          <div class="fi"><label class="fl">Confirmer</label><input class="inp" type="password" id="reset-2" placeholder="••••••••"/></div>
+          <button class="bp" onclick="confirmResetPassword()" id="reset-btn">Définir le mot de passe</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function confirmResetPassword() {
+  const p1 = document.getElementById('reset-1')?.value;
+  const p2 = document.getElementById('reset-2')?.value;
+  const btn = document.getElementById('reset-btn');
+  if (!p1 || p1.length < 8) { alert('Le mot de passe doit faire au moins 8 caractères'); return; }
+  if (p1 !== p2) { alert('Les deux mots de passe ne correspondent pas'); return; }
+  if (btn) { btn.textContent = 'Enregistrement…'; btn.disabled = true; }
+  try {
+    const { error } = await sb.auth.updateUser({ password: p1 });
+    if (error) { alert('Erreur : ' + error.message); if(btn){btn.textContent='Définir le mot de passe';btn.disabled=false;} return; }
+    // Nettoyer l'URL
+    window.location.hash = '';
+    showToast('Mot de passe défini', C.success);
+    setTimeout(() => { currentUser = null; bootApp(); }, 1000);
+  } catch(e) {
+    alert('Erreur');
+    if(btn){btn.textContent='Définir le mot de passe';btn.disabled=false;}
+  }
 }
 
 // Mapping camelCase JS ⇄ snake_case DB
@@ -3336,7 +3469,10 @@ function pgSettings() {
             : `<button class="bs" onclick="setPinModal()" style="width:100%;background:rgba(232,151,10,.12);border:1px solid rgba(232,151,10,.35);color:${C.accent}">Activer le code PIN</button>`}
         </div>
       </div>
-      ${currentUser ? `<div style="padding:14px"><button class="bs" onclick="doLogout()" style="width:100%;background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.35);color:#f85149">🚪 Se déconnecter</button></div>` : ''}
+      ${currentUser ? `<div style="padding:14px;display:flex;flex-direction:column;gap:8px">
+        <button class="bs" onclick="changePasswordModal()" style="width:100%">🔑 Changer mon mot de passe</button>
+        <button class="bs" onclick="doLogout()" style="width:100%;background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.35);color:#f85149">🚪 Se déconnecter</button>
+      </div>` : ''}
     </div>
 
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">ℹ️ À PROPOS</div>
@@ -3519,6 +3655,9 @@ async function initApp() {
 // Démarrage : vérifier l'authentification avant tout
 async function bootApp() {
   if (cloudEnabled) {
+    // Détecter si on arrive depuis un lien de réinitialisation de mot de passe
+    const isRecovery = await checkPasswordRecovery();
+    if (isRecovery) return;
     const isAuth = await checkAuth();
     if (!isAuth) {
       showLogin();
