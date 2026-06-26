@@ -335,6 +335,7 @@ async function doLogin() {
     await loadRole();
     restoreAppStructure();
     initApp();
+    startInactivityTracking();
   } catch(e) {
     showLogin('Erreur de connexion');
   }
@@ -353,7 +354,181 @@ async function doLogout() {
   try { await sb.auth.signOut(); } catch(e) {}
   currentUser = null;
   if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
+  stopInactivityTimer();
   showLogin();
+}
+
+// ═══════════════════════════════════
+// CODE PIN (verrouillage après inactivité)
+// ═══════════════════════════════════
+const PIN_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+let inactivityTimer = null;
+let pinAttempts = 0;
+
+// Hash simple du PIN (suffisant pour une barrière locale)
+async function hashPin(pin) {
+  const enc = new TextEncoder().encode(pin + (currentUser?.id || 'gmao'));
+  const buf = await crypto.subtle.digest('SHA-256', enc);
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+const pinKey = () => `gmao-pin-${currentUser?.id || 'local'}`;
+const hasPin = () => !!localStorage.getItem(pinKey());
+
+async function setPin(pin) {
+  const h = await hashPin(pin);
+  localStorage.setItem(pinKey(), h);
+}
+
+function removePin() {
+  localStorage.removeItem(pinKey());
+}
+
+async function verifyPin(pin) {
+  const stored = localStorage.getItem(pinKey());
+  if (!stored) return true;
+  const h = await hashPin(pin);
+  return h === stored;
+}
+
+// Timer d'inactivité : verrouille après 5 min sans activité
+function resetInactivityTimer() {
+  if (!hasPin()) return;
+  if (inactivityTimer) clearTimeout(inactivityTimer);
+  inactivityTimer = setTimeout(() => { lockApp(); }, PIN_TIMEOUT);
+}
+
+function stopInactivityTimer() {
+  if (inactivityTimer) { clearTimeout(inactivityTimer); inactivityTimer = null; }
+}
+
+function startInactivityTracking() {
+  if (!hasPin()) return;
+  ['click','keydown','touchstart','scroll'].forEach(evt => {
+    document.addEventListener(evt, resetInactivityTimer, { passive: true });
+  });
+  resetInactivityTimer();
+}
+
+// Affiche l'écran de verrouillage PIN
+function lockApp() {
+  if (!hasPin()) return;
+  stopInactivityTimer();
+  pinAttempts = 0;
+  showPinScreen();
+}
+
+function showPinScreen(errorMsg) {
+  const el = document.getElementById('app');
+  if (!el) return;
+  el.innerHTML = `
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--bg)">
+      <div style="width:100%;max-width:320px;text-align:center">
+        <div style="font-size:44px;margin-bottom:10px">🔒</div>
+        <div style="font-size:20px;font-weight:800;color:var(--accent);margin-bottom:6px">Code verrouillé</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:24px">Entrez votre code PIN</div>
+        ${errorMsg ? `<div style="background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.35);color:#f85149;padding:10px;border-radius:8px;font-size:13px;margin-bottom:14px">${esc(errorMsg)}</div>` : ''}
+        <input class="inp" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" id="pin-input" placeholder="••••" style="text-align:center;font-size:28px;letter-spacing:12px;padding:14px" oninput="if(this.value.length>=4)checkPinUnlock()" autofocus/>
+        <div style="margin-top:20px"><button class="bs" onclick="doLogout()" style="color:var(--muted)">Se déconnecter</button></div>
+      </div>
+    </div>
+  `;
+  setTimeout(() => document.getElementById('pin-input')?.focus(), 100);
+}
+
+async function checkPinUnlock() {
+  const pin = document.getElementById('pin-input')?.value;
+  if (!pin || pin.length < 4) return;
+  const ok = await verifyPin(pin);
+  if (ok) {
+    pinAttempts = 0;
+    restoreAppStructure();
+    render();
+    startInactivityTracking();
+  } else {
+    pinAttempts++;
+    if (pinAttempts >= 5) {
+      showToast('Trop de tentatives, déconnexion', '#f85149');
+      setTimeout(() => doLogout(), 1000);
+    } else {
+      showPinScreen(`Code incorrect (${5 - pinAttempts} essai(s) restant(s))`);
+    }
+  }
+}
+
+// Modales de gestion du PIN
+function setPinModal() {
+  openModal(`
+    <div class="mh"></div>
+    <div class="mhd"><span class="mt">🔐 Définir un code PIN</span><button class="mc" onclick="closeModal()">×</button></div>
+    <div class="mb">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Choisissez un code à 4 chiffres. Il sera demandé après 5 minutes d'inactivité.</div>
+      <div class="fi"><label class="fl">Nouveau code (4 chiffres)</label><input class="inp" type="password" inputmode="numeric" maxlength="6" id="pin-new" placeholder="••••" style="text-align:center;font-size:24px;letter-spacing:10px"/></div>
+      <div class="fi"><label class="fl">Confirmer le code</label><input class="inp" type="password" inputmode="numeric" maxlength="6" id="pin-confirm" placeholder="••••" style="text-align:center;font-size:24px;letter-spacing:10px"/></div>
+      <button class="bp" onclick="savePinFromModal()">Activer le code PIN</button>
+    </div>
+  `);
+}
+
+async function savePinFromModal() {
+  const p1 = document.getElementById('pin-new')?.value;
+  const p2 = document.getElementById('pin-confirm')?.value;
+  if (!p1 || p1.length < 4) { alert('Le code doit faire au moins 4 chiffres'); return; }
+  if (!/^\d+$/.test(p1)) { alert('Le code ne doit contenir que des chiffres'); return; }
+  if (p1 !== p2) { alert('Les deux codes ne correspondent pas'); return; }
+  await setPin(p1);
+  closeModal();
+  startInactivityTracking();
+  showToast('Code PIN activé', C.success);
+  render();
+}
+
+function changePinModal() {
+  openModal(`
+    <div class="mh"></div>
+    <div class="mhd"><span class="mt">🔐 Modifier le code PIN</span><button class="mc" onclick="closeModal()">×</button></div>
+    <div class="mb">
+      <div class="fi"><label class="fl">Code actuel</label><input class="inp" type="password" inputmode="numeric" maxlength="6" id="pin-old" placeholder="••••" style="text-align:center;font-size:24px;letter-spacing:10px"/></div>
+      <div class="fi"><label class="fl">Nouveau code</label><input class="inp" type="password" inputmode="numeric" maxlength="6" id="pin-new" placeholder="••••" style="text-align:center;font-size:24px;letter-spacing:10px"/></div>
+      <div class="fi"><label class="fl">Confirmer</label><input class="inp" type="password" inputmode="numeric" maxlength="6" id="pin-confirm" placeholder="••••" style="text-align:center;font-size:24px;letter-spacing:10px"/></div>
+      <button class="bp" onclick="changePinFromModal()">Modifier</button>
+    </div>
+  `);
+}
+
+async function changePinFromModal() {
+  const old = document.getElementById('pin-old')?.value;
+  const p1 = document.getElementById('pin-new')?.value;
+  const p2 = document.getElementById('pin-confirm')?.value;
+  if (!await verifyPin(old)) { alert('Code actuel incorrect'); return; }
+  if (!p1 || p1.length < 4 || !/^\d+$/.test(p1)) { alert('Nouveau code invalide (4 chiffres min)'); return; }
+  if (p1 !== p2) { alert('Les deux codes ne correspondent pas'); return; }
+  await setPin(p1);
+  closeModal();
+  showToast('Code PIN modifié', C.success);
+  render();
+}
+
+function disablePinModal() {
+  openModal(`
+    <div class="mh"></div>
+    <div class="mhd"><span class="mt">Désactiver le PIN</span><button class="mc" onclick="closeModal()">×</button></div>
+    <div class="mb">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Entrez votre code actuel pour confirmer la désactivation.</div>
+      <div class="fi"><label class="fl">Code actuel</label><input class="inp" type="password" inputmode="numeric" maxlength="6" id="pin-off" placeholder="••••" style="text-align:center;font-size:24px;letter-spacing:10px"/></div>
+      <button class="bp" onclick="disablePinFromModal()" style="background:rgba(248,81,73,.15);border:1px solid rgba(248,81,73,.4);color:${C.danger}">Désactiver le PIN</button>
+    </div>
+  `);
+}
+
+async function disablePinFromModal() {
+  const pin = document.getElementById('pin-off')?.value;
+  if (!await verifyPin(pin)) { alert('Code incorrect'); return; }
+  removePin();
+  stopInactivityTimer();
+  closeModal();
+  showToast('Code PIN désactivé', C.success);
+  render();
 }
 
 // Mapping camelCase JS ⇄ snake_case DB
@@ -3147,6 +3322,20 @@ function pgSettings() {
         <div style="font-size:12px;color:var(--muted);margin-top:2px">${currentUser ? esc(currentUser.email) : 'Mode local'}</div>
         <div style="margin-top:6px"><span style="display:inline-block;background:rgba(232,151,10,.15);border:1px solid rgba(232,151,10,.4);color:${C.accent};font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;text-transform:uppercase;letter-spacing:.05em">${currentRole}</span></div>
       </div>
+      <div style="padding:14px;border-bottom:1px solid var(--border)22">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div style="font-size:13px;font-weight:600">🔐 Code PIN (verrouillage auto)</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px">${hasPin() ? 'Activé · verrouillage après 5 min d\'inactivité' : 'Désactivé'}</div>
+          </div>
+          <span style="font-size:18px">${hasPin() ? '✅' : '⚪'}</span>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px">
+          ${hasPin()
+            ? `<button class="bs" onclick="changePinModal()" style="flex:1">Modifier</button><button class="bs" onclick="disablePinModal()" style="flex:1;color:${C.danger}">Désactiver</button>`
+            : `<button class="bs" onclick="setPinModal()" style="width:100%;background:rgba(232,151,10,.12);border:1px solid rgba(232,151,10,.35);color:${C.accent}">Activer le code PIN</button>`}
+        </div>
+      </div>
       ${currentUser ? `<div style="padding:14px"><button class="bs" onclick="doLogout()" style="width:100%;background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.35);color:#f85149">🚪 Se déconnecter</button></div>` : ''}
     </div>
 
@@ -3338,6 +3527,7 @@ async function bootApp() {
   }
   initApp();
   showInstallBanner();
+  startInactivityTracking();
 }
 
 bootApp();
