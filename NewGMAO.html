@@ -1074,7 +1074,7 @@ function modalEq(id) {
       <div class="fi"><label class="fl">Observations</label><textarea class="ta" id="eo">${esc(f.observations)}</textarea></div>
       ${!isN?`<hr style="border:none;border-top:1px solid var(--border);margin:14px 0">${renderDocsSection('eq', eq.id)}`:`<div style="font-size:11px;color:var(--muted);font-style:italic;margin:12px 0;padding:10px;background:var(--bg);border-radius:8px">💡 Enregistrez la machine pour ajouter des documents.</div>`}
       ${(!isN && canDelete())?`<button class="bd" onclick="delEq('${eq.id}')" style="margin-top:14px">Supprimer cet équipement</button>`:''}
-      <button class="bp" onclick="saveEq('${isN?'':eq.id}')">${isN?'Créer l\'équipement':'Enregistrer'}</button>
+      ${canWrite()?`<button class="bp" onclick="saveEq('${isN?'':eq.id}')">${isN?'Créer l\'équipement':'Enregistrer'}</button>`:''}
     </div>`);
 }
 
@@ -1808,7 +1808,7 @@ function modalOT(id) {
       <div class="fi"><label class="fl">Observations</label><textarea class="ta" id="otob">${esc(f.observations)}</textarea></div>
       ${!isN ? `<hr style="border:none;border-top:1px solid var(--border);margin:14px 0">${renderDocsSection('ot', ot.id)}` : ''}
       ${(!isN && canDelete())?`<button class="bd" onclick="delOT('${ot.id}')" style="margin-top:14px">Supprimer cet OT</button>`:''}
-      <button class="bp" onclick="saveOT('${isN?'':ot.id}')">${isN?'Créer l\'OT':'Enregistrer'}</button>
+      ${canWrite()?`<button class="bp" onclick="saveOT('${isN?'':ot.id}')">${isN?'Créer l\'OT':'Enregistrer'}</button>`:''}
     </div>`);
 }
 
@@ -2286,7 +2286,7 @@ function modalPrev(id) {
       <hr style="border:none;border-top:1px solid var(--border);margin:14px 0">
       <div class="fi"><label class="fl">Observations</label><textarea class="ta" id="pob">${esc(f.observations)}</textarea></div>
       ${(!isN && canDelete())?`<button class="bd" onclick="delPrev('${p.id}')">Supprimer cette gamme</button>`:''}
-      <button class="bp" onclick="savePrev('${isN?'':p.id}')">${isN?'Créer la gamme':'Enregistrer'}</button>
+      ${canWrite()?`<button class="bp" onclick="savePrev('${isN?'':p.id}')">${isN?'Créer la gamme':'Enregistrer'}</button>`:''}
     </div>`);
   // Mémoriser piecesPrevues actuelles
   window._prevPieces = [...f.piecesPrevues];
@@ -2521,7 +2521,7 @@ function modalSt(id) {
       </div>
       <div class="fi"><label class="fl">Observations</label><textarea class="ta" id="so">${esc(f.observations)}</textarea></div>
       ${(!isN && canDelete())?`<button class="bd" onclick="delSt('${s.id}')">Supprimer cette pièce</button>`:''}
-      <button class="bp" onclick="saveSt('${isN?'':s.id}')">${isN?'Ajouter au stock':'Enregistrer'}</button>
+      ${canWrite()?`<button class="bp" onclick="saveSt('${isN?'':s.id}')">${isN?'Ajouter au stock':'Enregistrer'}</button>`:''}
     </div>`);
 }
 
