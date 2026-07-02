@@ -763,6 +763,48 @@ async function notifyNewOT(ot) {
   } catch(e) { /* silencieux : ne jamais bloquer la création d'un OT */ }
 }
 
+// Charge la liste des comptes (opérateurs) pour les menus déroulants
+async function loadOperateurs() {
+  if (!cloudEnabled) { S.operateurs = []; return; }
+  try {
+    const { data, error } = await sb.from('profils').select('id,email,nom,role');
+    if (!error && data) S.operateurs = data;
+  } catch(e) { console.warn('loadOperateurs:', e); }
+}
+
+// Libellé d'un opérateur : son nom si défini, sinon l'email
+const operateurLabel = (p) => ((p.nom||'').trim() || p.email || '').trim();
+
+// Enregistre le nom d'affichage d'un compte (manager uniquement)
+async function saveOperateurNom(userId, nom) {
+  if (!cloudEnabled) return;
+  try {
+    const { error } = await sb.from('profils').update({ nom: (nom||'').trim() }).eq('id', userId);
+    if (error) { alert('Erreur : ' + error.message); return; }
+    const op = S.operateurs.find(o => o.id === userId);
+    if (op) op.nom = (nom||'').trim();
+    showToast('Nom enregistré', C.success);
+    render();
+  } catch(e) { alert('Erreur lors de l\'enregistrement'); }
+}
+
+// Liste triée et dédoublonnée des noms d'opérateurs
+function operateurNoms() {
+  const noms = S.operateurs.map(operateurLabel).filter(Boolean);
+  return [...new Set(noms)].sort((a,b)=>a.localeCompare(b,'fr'));
+}
+
+// Génère les <option> d'un select opérateur (préserve une valeur historique éventuelle)
+function operateurOptions(selected) {
+  const uniq = operateurNoms();
+  let opts = `<option value="">— Opérateur —</option>`;
+  if (selected && !uniq.includes(selected)) {
+    opts += `<option value="${esc(selected)}" selected>${esc(selected)}</option>`;
+  }
+  opts += uniq.map(n => `<option ${selected===n?'selected':''}>${esc(n)}</option>`).join('');
+  return opts;
+}
+
 // Mapping camelCase JS ⇄ snake_case DB
 const camelToSnake = {
   equipementId: 'equipement_id',
@@ -906,6 +948,7 @@ const DEMO_STOCK=[
 const S = {
   page:'dashboard',
   eq: [], ots: [], prev: [], stock: [], otPieces: [], settings: [], docs: [], indisp: [],
+  operateurs: [],
   search:{eq:'',ots:'',prev:'',stock:''},
   otFilter:'all',
   prevSite:'all',
@@ -1534,7 +1577,7 @@ function quickPanne(eqId) {
           <option value="haute">haute</option>
           <option value="normale">normale</option>
         </select></div>
-        <div class="fi"><label class="fl">Technicien</label><input class="inp" id="qp-tech" placeholder="Nom"/></div>
+        <div class="fi"><label class="fl">Opérateur</label><select class="sel" id="qp-tech">${operateurOptions('')}</select></div>
       </div>
       <div class="fi"><label class="fl">Mettre la machine en panne ?</label><select class="sel" id="qp-statut">
         <option value="en panne" selected>Oui · en panne</option>
@@ -1566,6 +1609,7 @@ function saveQuickPanne(eqId, numero) {
   };
   S.ots = [...S.ots, newOT];
   syncSave('ots', newOT);
+  notifyNewOT(newOT);
 
   // Mettre à jour le statut de la machine
   const newStatut = document.getElementById('qp-statut').value;
@@ -1631,6 +1675,7 @@ function confirmValiderOT(otId) {
         <div class="fi"><label class="fl">Début</label><input class="inp" type="datetime-local" id="val-debut" value="${ot.dateDebut ? new Date(ot.dateDebut).toISOString().slice(0,16) : ''}"/></div>
         <div class="fi"><label class="fl">Fin</label><input class="inp" type="datetime-local" id="val-fin" value="${nowISO.slice(0,16)}"/></div>
       </div>
+      <div class="fi"><label class="fl">Opérateur</label><select class="sel" id="val-tech">${operateurOptions(ot.technicien)}</select></div>
       <div class="fi"><label class="fl">Observations / compte-rendu</label><textarea class="ta" id="val-obs" placeholder="Action réalisée, résultat...">${esc(ot.observations||'')}</textarea></div>
       <button class="bp" onclick="finishValiderOT('${otId}')">✓ Marquer terminé</button>
     </div>
@@ -1655,12 +1700,14 @@ function finishValiderOT(otId) {
   const coutMO = Number((dureeH * tarifH).toFixed(2));
   const coutPieces = Number(ot.coutPieces) || 0;
   const coutTotal = coutMO + coutPieces;
+  const valTech = document.getElementById('val-tech')?.value || ot.technicien || '';
   const newOT = {
     ...ot,
     statut: 'terminé',
     dateDebut, dateFin,
     dureeH, coutMO, coutTotal,
     dateCloture: today(),
+    technicien: valTech,
     observations: obs,
   };
   S.ots = S.ots.map(o => o.id === otId ? newOT : o);
@@ -1709,7 +1756,7 @@ function quickPreventif(eqId) {
         Cochez les gammes terminées · la prochaine échéance sera recalculée automatiquement
       </div>
       <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:14px">${rows}</div>
-      <div class="fi"><label class="fl">Technicien</label><input class="inp" id="qpv-tech" placeholder="Nom"/></div>
+      <div class="fi"><label class="fl">Opérateur</label><select class="sel" id="qpv-tech">${operateurOptions('')}</select></div>
       <button class="bp" onclick="saveQuickPreventif('${eqId}')">Valider les gammes cochées</button>
     </div>
   `);
@@ -1891,7 +1938,7 @@ function modalOT(id) {
         <div class="fi"><label class="fl">Statut</label><select class="sel" id="otst">
           ${['ouvert','en cours','terminé','annulé'].map(s=>`<option ${f.statut===s?'selected':''}>${s}</option>`).join('')}
         </select></div>
-        <div class="fi"><label class="fl">Technicien</label><input class="inp" id="ottech" value="${esc(f.technicien)}" placeholder="Prénom Nom"/></div>
+        <div class="fi"><label class="fl">Opérateur</label><select class="sel" id="ottech">${operateurOptions(f.technicien)}</select></div>
       </div>
       <div class="g2">
         <div class="fi"><label class="fl">Date prévue</label><input class="inp" type="date" id="otd" value="${f.datePrevue||''}"/></div>
@@ -2362,7 +2409,7 @@ function togglePrevSite(btn) {
 function modalPrev(id) {
   const p=id?S.prev.find(x=>x.id===id):null;
   const isN=!p;
-  const f=p?{...p}:{equipementId:'',tache:'',frequence:'mensuel',dernierPassage:'',prochaineEcheance:'',technicien:'',observations:'',piecesPrevues:[]};
+  const f=p?{...p}:{equipementId:'',tache:'',description:'',frequence:'mensuel',dernierPassage:'',prochaineEcheance:'',technicien:'',observations:'',piecesPrevues:[]};
   // S'assurer que piecesPrevues est un tableau
   if (!Array.isArray(f.piecesPrevues)) f.piecesPrevues = [];
 
@@ -2388,6 +2435,7 @@ function modalPrev(id) {
     </div>
     <div class="mb">
       <div class="fi"><label class="fl">Tâche *</label><input class="inp" id="ptt" value="${esc(f.tache)}" placeholder="Ex: Vidange huile moteur"/></div>
+      <div class="fi"><label class="fl">Description / mode opératoire</label><textarea class="ta" id="pdesc" placeholder="Détails de l'intervention, points de contrôle, consignes...">${esc(f.description||'')}</textarea></div>
       ${isN ? `
       <div class="fi">
         <label class="fl">Machines * (cochez une ou plusieurs)</label>
@@ -2424,7 +2472,7 @@ function modalPrev(id) {
         <div class="fi"><label class="fl">Fréquence</label><select class="sel" id="pfr" onchange="updateEcheanceAuto()">
           ${['hebdomadaire','mensuel','trimestriel','semestriel','annuel'].map(ff=>`<option ${f.frequence===ff?'selected':''}>${ff}</option>`).join('')}
         </select></div>
-        <div class="fi"><label class="fl">Technicien</label><input class="inp" id="pte" value="${esc(f.technicien)}" placeholder="Prénom Nom"/></div>
+        <div class="fi"><label class="fl">Opérateur</label><select class="sel" id="pte">${operateurOptions(f.technicien)}</select></div>
       </div>
       <div class="g2">
         <div class="fi"><label class="fl">Dernier passage</label><input class="inp" type="date" id="pla" value="${f.dernierPassage||''}" onchange="updateEcheanceAuto()"/></div>
@@ -2453,6 +2501,7 @@ function openAddPrevPiece(prevId) {
   // Sauvegarder l'état du form
   window._prevFormState = {
     tache: document.getElementById('ptt')?.value || '',
+    description: document.getElementById('pdesc')?.value || '',
     equipementId: document.getElementById('peq')?.value || '',
     frequence: document.getElementById('pfr')?.value || 'mensuel',
     technicien: document.getElementById('pte')?.value || '',
@@ -2510,6 +2559,7 @@ function restorePrevForm(prevId) {
       const st = window._prevFormState || {};
       const set = (id, val) => { const e = document.getElementById(id); if (e && val !== undefined) e.value = val; };
       set('ptt', st.tache); set('peq', st.equipementId); set('pfr', st.frequence);
+      set('pdesc', st.description);
       set('pte', st.technicien); set('pla', st.dernierPassage); set('pne', st.prochaineEcheance);
       set('pob', st.observations);
       // Restaurer les machines cochées
@@ -2561,6 +2611,7 @@ function savePrev(id) {
 
   const base = {
     tache,
+    description:document.getElementById('pdesc')?.value || '',
     frequence,
     technicien:document.getElementById('pte').value,
     dernierPassage,
@@ -2774,6 +2825,8 @@ function pgStats() {
   const maxMois = Math.max(...moisData, 1);
 
   const techCount = {};
+  // Inclure tous les opérateurs connus, même sans OT sur la période
+  operateurNoms().forEach(n => { techCount[n] = { total:0, termines:0, heures:0 }; });
   otsInPeriod.forEach(o => {
     const t = (o.technicien||'').trim() || '(non assigné)';
     if (!techCount[t]) techCount[t] = { total:0, termines:0, heures:0 };
@@ -2781,7 +2834,7 @@ function pgStats() {
     if (o.statut === 'terminé') techCount[t].termines++;
     techCount[t].heures += Number(o.dureeH)||0;
   });
-  const techRows = Object.entries(techCount).sort((a,b)=>b[1].total-a[1].total).slice(0,6);
+  const techRows = Object.entries(techCount).sort((a,b)=>b[1].total-a[1].total).slice(0,12);
 
   const prevEnRetard = S.prev.filter(p => { const d=daysUntil(p.prochaineEcheance); return d!==null && d<=0; }).length;
   const tauxPrev = S.prev.length === 0 ? 100 : Math.round(((S.prev.length - prevEnRetard) / S.prev.length) * 100);
@@ -2800,10 +2853,15 @@ function pgStats() {
   const stockValue = S.stock.reduce((s, x) => s + x.quantite * (x.prixUnitaire||0), 0);
   const stockAlt = S.stock.filter(s => s.quantite <= s.seuilAlerte).length;
 
-  const total = otsInPeriod.length || 1;
-  const pctCorr = Math.round((otsCorrectifs.length / total) * 100);
-  const pctPrev = Math.round((otsPreventifs.length / total) * 100);
-  const pctAutre = 100 - pctCorr - pctPrev;
+  const otsHorsPrev = otsInPeriod.filter(o => o.type !== 'préventif');
+  const totalHP = otsHorsPrev.length || 1;
+  const nbCorr = otsHorsPrev.filter(o=>o.type==='correctif').length;
+  const nbAmel = otsHorsPrev.filter(o=>o.type==='amélioratif').length;
+  const nbRonde = otsHorsPrev.filter(o=>o.type==='ronde').length;
+  const pctCorr = Math.round((nbCorr/totalHP)*100);
+  const pctAmel = Math.round((nbAmel/totalHP)*100);
+  const pctRonde = Math.round((nbRonde/totalHP)*100);
+  const pctAutre = Math.max(0, 100 - pctCorr - pctAmel - pctRonde);
 
   const KPI = (val, lbl, sub, col) => `
     <div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${col};border-radius:12px;padding:12px 14px">
@@ -2834,17 +2892,18 @@ function pgStats() {
       ${KPI(mtbf==='—'?'—':mtbf+'j', 'MTBF moyen', 'Entre pannes', C.success)}
     </div>
 
-    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">RÉPARTITION DES OT</div>
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">RÉPARTITION DES OT (hors préventif)</div>
     <div class="card" style="padding:14px">
       <div style="display:flex;height:24px;border-radius:12px;overflow:hidden;margin-bottom:10px;background:var(--bg)">
         <div style="background:${C.danger};width:${pctCorr}%"></div>
-        <div style="background:${C.success};width:${pctPrev}%"></div>
+        <div style="background:${C.info};width:${pctAmel}%"></div>
+        <div style="background:${C.accent};width:${pctRonde}%"></div>
         <div style="background:${C.muted};width:${pctAutre}%"></div>
       </div>
       <div style="display:flex;gap:14px;font-size:11px;flex-wrap:wrap">
-        <span><span style="color:${C.danger}">●</span> Correctif ${pctCorr}% (${otsCorrectifs.length})</span>
-        <span><span style="color:${C.success}">●</span> Préventif ${pctPrev}% (${otsPreventifs.length})</span>
-        <span><span style="color:${C.muted}">●</span> Autre ${pctAutre}%</span>
+        <span><span style="color:${C.danger}">●</span> Correctif ${pctCorr}% (${nbCorr})</span>
+        <span><span style="color:${C.info}">●</span> Amélioratif ${pctAmel}% (${nbAmel})</span>
+        <span><span style="color:${C.accent}">●</span> Ronde ${pctRonde}% (${nbRonde})</span>
       </div>
     </div>
 
@@ -3602,6 +3661,26 @@ function pgSettings() {
       </div>
     </div>
 
+    ${canManage() ? `
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">👥 ÉQUIPE / OPÉRATEURS</div>
+    <div class="card">
+      <div style="padding:12px 14px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border)22">
+        Renseigne le nom de chaque compte : c'est ce qui apparaîtra dans les menus déroulants et les statistiques.
+      </div>
+      ${S.operateurs.length === 0
+        ? `<div style="padding:14px;font-size:12px;color:var(--muted);text-align:center;font-style:italic">Aucun compte chargé</div>`
+        : [...S.operateurs].sort((a,b)=>operateurLabel(a).localeCompare(operateurLabel(b),'fr')).map(o => `
+          <div style="padding:12px 14px;border-bottom:1px solid var(--border)22">
+            <div style="font-size:11px;color:var(--muted);margin-bottom:5px">${esc(o.email)} · <span style="color:${C.accent}">${esc(o.role||'lecteur')}</span></div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input class="inp" id="opnom-${o.id}" value="${esc(o.nom||'')}" placeholder="Prénom Nom" style="flex:1"/>
+              <button class="bs" onclick="saveOperateurNom('${o.id}', document.getElementById('opnom-${o.id}').value)" style="padding:10px 14px">OK</button>
+            </div>
+          </div>
+        `).join('')}
+    </div>
+    ` : ''}
+
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">🔒 COMPTE</div>
     <div class="card">
       <div style="padding:14px;border-bottom:1px solid var(--border)22">
@@ -3781,6 +3860,7 @@ async function initApp() {
       const data = await loadFromCloud();
       S.eq = data.eq; S.ots = data.ots; S.prev = data.prev; S.stock = data.stock;
       S.otPieces = data.otPieces || []; S.settings = data.settings || []; S.docs = data.docs || []; S.indisp = data.indisp || [];
+      await loadOperateurs();
       saveAll();
       S.loading = false;
       subscribeAll();
