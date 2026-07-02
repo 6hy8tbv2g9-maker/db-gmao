@@ -767,7 +767,7 @@ async function notifyNewOT(ot) {
 async function loadOperateurs() {
   if (!cloudEnabled) { S.operateurs = []; return; }
   try {
-    const { data, error } = await sb.from('profils').select('id,email,nom,role');
+    const { data, error } = await sb.from('profils').select('id,email,nom,role,est_operateur');
     if (!error && data) S.operateurs = data;
   } catch(e) { console.warn('loadOperateurs:', e); }
 }
@@ -788,10 +788,30 @@ async function saveOperateurNom(userId, nom) {
   } catch(e) { alert('Erreur lors de l\'enregistrement'); }
 }
 
+// Un compte est-il un opérateur (proposé dans les listes) ?
+// Flag explicite prioritaire ; sinon, par défaut les techniciens le sont.
+function estOperateur(o) {
+  if (o.est_operateur === true) return true;
+  if (o.est_operateur === false) return false;
+  return o.role === 'technicien';
+}
+
 // Liste triée et dédoublonnée des noms d'opérateurs
 function operateurNoms() {
-  const noms = S.operateurs.map(operateurLabel).filter(Boolean);
+  const noms = S.operateurs.filter(estOperateur).map(operateurLabel).filter(Boolean);
   return [...new Set(noms)].sort((a,b)=>a.localeCompare(b,'fr'));
+}
+
+// Active/désactive un compte comme opérateur (manager uniquement)
+async function toggleOperateur(userId, val) {
+  if (!cloudEnabled) return;
+  try {
+    const { error } = await sb.from('profils').update({ est_operateur: val }).eq('id', userId);
+    if (error) { alert('Erreur : ' + error.message); return; }
+    const op = S.operateurs.find(o => o.id === userId);
+    if (op) op.est_operateur = val;
+    render();
+  } catch(e) { alert('Erreur lors de l\'enregistrement'); }
 }
 
 // Génère les <option> d'un select opérateur (préserve une valeur historique éventuelle)
@@ -3676,6 +3696,10 @@ function pgSettings() {
               <input class="inp" id="opnom-${o.id}" value="${esc(o.nom||'')}" placeholder="Prénom Nom" style="flex:1"/>
               <button class="bs" onclick="saveOperateurNom('${o.id}', document.getElementById('opnom-${o.id}').value)" style="padding:10px 14px">OK</button>
             </div>
+            <label style="display:flex;align-items:center;gap:8px;margin-top:8px;cursor:pointer;font-size:12px;color:var(--muted)">
+              <input type="checkbox" ${estOperateur(o)?'checked':''} onchange="toggleOperateur('${o.id}', this.checked)" style="width:16px;height:16px;accent-color:${C.accent}"/>
+              Apparaît dans la liste des opérateurs
+            </label>
           </div>
         `).join('')}
     </div>
