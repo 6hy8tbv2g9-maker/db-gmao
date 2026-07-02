@@ -1054,6 +1054,7 @@ function renderNav() {
 }
 
 function go(page) { S.page=page; render(); }
+function goOTs(filter) { S.otFilter=filter||'all'; S.page='ots'; render(); }
 
 // ═══════════════════════════════════
 // RENDER
@@ -1092,8 +1093,8 @@ function pgDashboard() {
   const sAlt = S.stock.filter(s=>s.quantite<=s.seuilAlerte);
   const pannes = S.eq.filter(e=>e.statut==='en panne');
 
-  const kpi = (v,l,s,col) => `
-    <div class="kc" style="border-left:3px solid ${col}">
+  const kpi = (v,l,s,col,onclick) => `
+    <div class="kc" style="border-left:3px solid ${col}${onclick?';cursor:pointer':''}" ${onclick?`onclick="${onclick}"`:''}>
       <div class="kv" style="color:${col}">${v}</div>
       <div class="kl">${l}</div>
       ${s?`<div class="ks">${s}</div>`:''}
@@ -1101,7 +1102,7 @@ function pgDashboard() {
 
   const otRow = ot => {
     const eq=S.eq.find(e=>e.id===ot.equipementId);
-    return `<div class="ci">
+    return `<div class="ci" onclick="modalOT('${ot.id}')" style="cursor:pointer">
       <div style="flex:1;min-width:0">
         <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
           <span class="mono" style="color:var(--accent)">${esc(ot.numero)}</span> ${esc(ot.titre)}
@@ -1119,7 +1120,7 @@ function pgDashboard() {
     const eq=S.eq.find(e=>e.id===p.equipementId);
     const d=daysUntil(p.prochaineEcheance);
     const col=d<=0?C.danger:d<=7?C.warning:C.info;
-    return `<div class="ci">
+    return `<div class="ci" onclick="modalPrev('${p.id}')" style="cursor:pointer">
       <div style="flex:1">
         <div style="font-size:13px;font-weight:600">${esc(p.tache)}</div>
         <div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(eq?.nom||'—')} · ${p.frequence}</div>
@@ -1139,10 +1140,10 @@ function pgDashboard() {
     </div>
 
     <div class="kg">
-      ${kpi(S.eq.length,'Équipements',pannes.length?`${pannes.length} en panne`:'Tous opérationnels',pannes.length?C.danger:C.success)}
-      ${kpi(actifs.length,'OT actifs',retards.length?`${retards.length} en retard`:urgents.length?`${urgents.length} urgent(s)`:'OK',(urgents.length||retards.length)?C.danger:C.warning)}
-      ${kpi(prev30.length,'Maintenances 30j',prev30.filter(p=>daysUntil(p.prochaineEcheance)<=7).length+' sous 7j',prev30.filter(p=>daysUntil(p.prochaineEcheance)<=7).length?C.danger:C.info)}
-      ${kpi(sAlt.length,'Alertes stock',sAlt.length?'Réappro nécessaire':'Stock OK',sAlt.length?C.warning:C.success)}
+      ${kpi(S.eq.length,'Équipements',pannes.length?`${pannes.length} en panne`:'Tous opérationnels',pannes.length?C.danger:C.success,"go('equipements')")}
+      ${kpi(actifs.length,'OT actifs',retards.length?`${retards.length} en retard`:urgents.length?`${urgents.length} urgent(s)`:'OK',(urgents.length||retards.length)?C.danger:C.warning,"goOTs('actifs')")}
+      ${kpi(prev30.length,'Maintenances 30j',prev30.filter(p=>daysUntil(p.prochaineEcheance)<=7).length+' sous 7j',prev30.filter(p=>daysUntil(p.prochaineEcheance)<=7).length?C.danger:C.info,"go('preventif')")}
+      ${kpi(sAlt.length,'Alertes stock',sAlt.length?'Réappro nécessaire':'Stock OK',sAlt.length?C.warning:C.success,"go('stock')")}
     </div>
 
     ${actifs.length?`<div class="st">OT EN COURS</div><div class="card">${actifs.slice(0,5).map(otRow).join('')}</div>`:''}
@@ -1150,7 +1151,7 @@ function pgDashboard() {
     ${sAlt.length?`
     <div class="st" style="color:${C.warning}">⚠ ALERTES STOCK</div>
     <div class="card" style="border-left:3px solid ${C.warning}">
-      ${sAlt.map(s=>`<div class="ci">
+      ${sAlt.map(s=>`<div class="ci" onclick="modalSt('${s.id}')" style="cursor:pointer">
         <div style="flex:1">
           <div style="font-size:13px;font-weight:600">${esc(s.designation)}</div>
           <div style="font-size:11px;color:var(--muted)">${esc(s.reference)} · ${esc(s.localisation)}</div>
@@ -1868,7 +1869,9 @@ function pgOTs() {
   const q=S.search.ots.toLowerCase(), f=S.otFilter;
   const list=S.ots.filter(o=>{
     const eq=S.eq.find(e=>e.id===o.equipementId);
-    return (o.titre.toLowerCase().includes(q)||o.numero?.includes(q)||eq?.nom.toLowerCase().includes(q))&&(f==='all'||o.statut===f);
+    const matchTxt = (o.titre.toLowerCase().includes(q)||o.numero?.includes(q)||eq?.nom.toLowerCase().includes(q));
+    const matchStat = f==='all' ? true : f==='actifs' ? !['terminé','annulé'].includes(o.statut) : o.statut===f;
+    return matchTxt && matchStat;
   });
 
   return `
@@ -1877,7 +1880,7 @@ function pgOTs() {
     </div>
     <div class="sc"><input id="ot-search" class="si" placeholder="Rechercher…" value="${esc(S.search.ots)}" oninput="S.search.ots=this.value;render()"/></div>
     <div class="chips">
-      ${['all','ouvert','en cours','terminé','annulé'].map(s=>
+      ${['all','actifs','ouvert','en cours','terminé','annulé'].map(s=>
         `<button class="chip ${S.otFilter===s?'on':''}" onclick="S.otFilter='${s}';render()">${s==='all'?'Tous':s}</button>`).join('')}
     </div>
     ${list.length===0?`<div class="empty"><div class="empty-i">🔧</div><div>Aucun OT</div></div>`:`
