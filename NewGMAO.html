@@ -239,7 +239,7 @@ function jourOuvreProche(dateStr) {
 const fmt = d => d ? new Date(d).toLocaleDateString('fr-FR') : '—';
 const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
-const statusCol = s => ({'en service':C.success,'en panne':C.danger,'en maintenance':C.warning,'hors service':C.muted,'ouvert':C.info,'en cours':C.warning,'terminé':C.success,'annulé':C.muted}[s]||C.muted);
+const statusCol = s => ({'en service':C.success,'en panne':C.danger,'en maintenance':C.warning,'hors service':C.muted,'actif':C.info,'ouvert':C.info,'en cours':C.warning,'terminé':C.success,'annulé':C.muted}[s]||C.muted);
 const prioCol   = p => ({'urgent':C.danger,'haute':'#ff9580','normale':C.info,'basse':C.muted}[p]||C.muted);
 const badge     = (l,col) => `<span class="badge" style="color:${col};background:${col}22;border:1px solid ${col}44">${esc(l)}</span>`;
 const eqIcon    = t => ({'électrique':'⚡','hydraulique':'💧','pneumatique':'💨','mécanique':'⚙','thermique':'🔥'}[t]||'🔧');
@@ -1458,19 +1458,31 @@ function pgEquipements() {
         oninput="S.search.eq=this.value;render()" />
     </div>
 
-    ${list.length===0?`<div class="empty"><div class="empty-i">⚙</div><div>Aucun équipement</div></div>`:`
-    <div class="card" style="margin-top:10px">
-      ${list.map(eq=>`
+    ${list.length===0?`<div class="empty"><div class="empty-i">⚙</div><div>Aucun équipement</div></div>`:(()=>{
+      // Regrouper par site (sites définis + 'Sans site' en fin)
+      const groupes = [...SITES, ''];
+      const eqRow = eq => `
         <div class="ci" onclick="modalEq('${eq.id}')">
           <div style="width:42px;height:42px;border-radius:11px;background:${statusCol(eq.statut)}18;border:1px solid ${statusCol(eq.statut)}33;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">${eqIcon(eq.type)}</div>
           <div style="flex:1;min-width:0">
             <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(eq.nom)}</div>
-            <div style="font-size:11px;color:var(--muted);margin-top:2px">📍 ${esc(eq.localisation)}</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px">📍 ${esc(eq.localisation||'—')}</div>
             <div style="margin-top:5px">${badge(eq.statut,statusCol(eq.statut))}</div>
           </div>
           <button class="bq" onclick="event.stopPropagation();showQR('${eq.id}')" style="font-size:11px;padding:5px 9px;flex-shrink:0">⊞ QR</button>
-        </div>`).join('')}
-    </div>`}
+        </div>`;
+      return groupes.map(site => {
+        const items = list.filter(e => (e.site||'') === site).sort((a,b)=>a.nom.localeCompare(b.nom,'fr'));
+        if (items.length === 0) return '';
+        const label = site || 'Sans site';
+        return `
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:14px 14px 6px;display:flex;justify-content:space-between;align-items:baseline">
+            <span>📍 ${esc(label)}</span>
+            <span style="color:var(--muted);font-weight:600">${items.length}</span>
+          </div>
+          <div class="card">${items.map(eqRow).join('')}</div>`;
+      }).join('');
+    })()}
 
     <div class="sp"></div>
     ${canWrite()?`<button class="fab" onclick="modalEq(null)">+</button>`:""}`;
@@ -1892,7 +1904,7 @@ function saveQuickPanne(eqId, numero) {
     equipementId: eqId,
     type: 'correctif',
     priorite: document.getElementById('qp-pri').value,
-    statut: 'ouvert',
+    statut: 'actif',
     description: desc,
     dateCreation: today(),
     datePrevue: today(),
@@ -2250,7 +2262,7 @@ function pgOTs() {
     </div>
     <div class="sc"><input id="ot-search" class="si" placeholder="Rechercher…" value="${esc(S.search.ots)}" oninput="S.search.ots=this.value;render()"/></div>
     <div class="chips">
-      ${['all','actifs','ouvert','en cours','terminé','annulé'].map(s=>
+      ${['all','actifs','en cours','terminé','annulé'].map(s=>
         `<button class="chip ${S.otFilter===s?'on':''}" onclick="S.otFilter='${s}';render()">${s==='all'?'Tous':s}</button>`).join('')}
     </div>
     ${list.length===0?`<div class="empty"><div class="empty-i">🔧</div><div>Aucun OT</div></div>`:`
@@ -2279,7 +2291,7 @@ function pgOTs() {
 function modalOT(id) {
   const ot=id?S.ots.find(o=>o.id===id):null;
   const isN=!ot;
-  const f=ot?{...ot}:{titre:'',equipementId:'',type:'correctif',priorite:'normale',statut:'ouvert',description:'',dateCreation:today(),datePrevue:'',dateDebut:'',dateFin:'',dateCloture:'',dureeH:0,coutMO:0,coutPieces:0,coutTotal:0,technicien:'',observations:'',numero:nextOT(S.ots)};
+  const f=ot?{...ot}:{titre:'',equipementId:'',type:'correctif',priorite:'normale',statut:'actif',description:'',dateCreation:today(),datePrevue:'',dateDebut:'',dateFin:'',dateCloture:'',dureeH:0,coutMO:0,coutPieces:0,coutTotal:0,technicien:'',observations:'',numero:nextOT(S.ots)};
 
   // Pièces déjà consommées sur cet OT (ou pièces temporaires si création)
   if (isN) window._tmpPieces = window._tmpPieces || [];
@@ -2329,7 +2341,7 @@ function modalOT(id) {
       </div>
       <div class="g2">
         <div class="fi"><label class="fl">Statut</label><select class="sel" id="otst">
-          ${['ouvert','en cours','terminé','annulé'].map(s=>`<option ${f.statut===s?'selected':''}>${s}</option>`).join('')}
+          ${['actif','en cours','terminé','annulé'].map(s=>`<option ${(f.statut===s || (s==='actif' && f.statut==='ouvert'))?'selected':''}>${s}</option>`).join('')}
         </select></div>
         <div class="fi"><label class="fl">Opérateur</label><select class="sel" id="ottech">${operateurOptions(f.technicien)}</select></div>
       </div>
@@ -2447,7 +2459,7 @@ function openAddPieceTmp() {
     equipementId: document.getElementById('oteq')?.value || '',
     type: document.getElementById('otty')?.value || 'correctif',
     priorite: document.getElementById('otpr')?.value || 'normale',
-    statut: document.getElementById('otst')?.value || 'ouvert',
+    statut: document.getElementById('otst')?.value || 'actif',
     technicien: document.getElementById('ottech')?.value || '',
     datePrevue: document.getElementById('otd')?.value || '',
     dateCloture: document.getElementById('otc')?.value || '',
@@ -3079,36 +3091,59 @@ function pgStock() {
   const list=S.stock.filter(s=>s.designation.toLowerCase().includes(q)||s.reference.toLowerCase().includes(q)||(s.categorie||'').toLowerCase().includes(q));
   const val=S.stock.reduce((a,x)=>a+x.quantite*x.prixUnitaire,0);
 
+  const rowStock = s => {
+    const al=s.quantite<=s.seuilAlerte;
+    return `<div class="ci" onclick="modalSt('${s.id}')">
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:7px;margin-bottom:3px;flex-wrap:wrap">
+          <span class="mono" style="color:var(--accent);font-weight:700">${esc(s.reference)}</span>
+          ${s.categorie?badge(s.categorie,C.info):''}
+          ${al?`<span style="color:${C.warning};font-size:14px">⚠</span>`:''}
+        </div>
+        <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.designation)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(s.localisation||'—')} · ${esc(s.fournisseur||'—')}</div>
+      </div>
+      <div class="qc" onclick="event.stopPropagation()">
+        <button class="qb" onclick="adjStock('${s.id}',-1)">−</button>
+        <span class="qv" style="color:${al?C.warning:C.success}">${s.quantite}</span>
+        <button class="qb" onclick="adjStock('${s.id}',1)">+</button>
+      </div>
+    </div>`;
+  };
+
+  const alertes = list.filter(s => s.quantite <= s.seuilAlerte).sort((a,b)=>a.designation.localeCompare(b.designation,'fr'));
+  const normaux = list.filter(s => s.quantite > s.seuilAlerte);
+  const parCategorie = {};
+  normaux.forEach(s => {
+    const cat = (s.categorie || '').trim() || 'Autres';
+    (parCategorie[cat] = parCategorie[cat] || []).push(s);
+  });
+  const categories = Object.keys(parCategorie).sort((a,b)=>a==='Autres'?1:b==='Autres'?-1:a.localeCompare(b,'fr'));
+
   return `
     <div class="ph">
       <div>
         <div class="pt">Stock PDR</div>
-        <div class="ps">${list.length} réf. · <span style="color:var(--accent);font-family:monospace">${val.toFixed(2)} €</span></div>
+        <div class="ps">${list.length} réf. · <span style="color:var(--accent);font-family:monospace">${val.toFixed(2)} €</span>${alertes.length?` · <span style="color:${C.warning}">⚠ ${alertes.length} en alerte</span>`:''}</div>
       </div>
     </div>
     <div class="sc"><input id="st-search" class="si" placeholder="Rechercher…" value="${esc(S.search.stock)}" oninput="S.search.stock=this.value;render()"/></div>
     ${list.length===0?`<div class="empty"><div class="empty-i">📦</div><div>Aucune pièce en stock</div></div>`:`
-    <div class="card" style="margin-top:10px">
-      ${list.map(s=>{
-        const al=s.quantite<=s.seuilAlerte;
-        return `<div class="ci" onclick="modalSt('${s.id}')">
-          <div style="flex:1;min-width:0">
-            <div style="display:flex;align-items:center;gap:7px;margin-bottom:3px;flex-wrap:wrap">
-              <span class="mono" style="color:var(--accent);font-weight:700">${esc(s.reference)}</span>
-              ${s.categorie?badge(s.categorie,C.info):''}
-              ${al?`<span style="color:${C.warning};font-size:14px">⚠</span>`:''}
-            </div>
-            <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.designation)}</div>
-            <div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(s.localisation)} · ${esc(s.fournisseur)}</div>
-          </div>
-          <div class="qc" onclick="event.stopPropagation()">
-            <button class="qb" onclick="adjStock('${s.id}',-1)">−</button>
-            <span class="qv" style="color:${al?C.warning:C.success}">${s.quantite}</span>
-            <button class="qb" onclick="adjStock('${s.id}',1)">+</button>
-          </div>
-        </div>`;
-      }).join('')}
-    </div>`}
+      ${alertes.length?`
+        <div style="font-size:11px;color:${C.warning};text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:14px 14px 6px;display:flex;justify-content:space-between;align-items:baseline">
+          <span>⚠ EN ALERTE</span>
+          <span style="font-weight:600">${alertes.length}</span>
+        </div>
+        <div class="card" style="border-left:3px solid ${C.warning}">${alertes.map(rowStock).join('')}</div>
+      `:''}
+      ${categories.map(cat => `
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:14px 14px 6px;display:flex;justify-content:space-between;align-items:baseline">
+          <span>${esc(cat)}</span>
+          <span style="font-weight:600">${parCategorie[cat].length}</span>
+        </div>
+        <div class="card">${parCategorie[cat].sort((a,b)=>a.designation.localeCompare(b.designation,'fr')).map(rowStock).join('')}</div>
+      `).join('')}
+    `}
     <div class="sp"></div>
     ${canWrite()?`<button class="fab" onclick="modalSt(null)">+</button>`:""}`;
 }
