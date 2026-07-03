@@ -26,6 +26,12 @@
       --accent: #e8970a; --success: #3fb950; --warning: #d29922;
       --danger: #f85149; --info: #58a6ff;
     }
+    [data-theme="light"] {
+      --bg: #f2f4f7; --surface: #ffffff; --surface2: #e9edf2;
+      --border: #d0d7de; --text: #1f2328; --muted: #6b7280;
+      --accent: #d97b06; --success: #1a7f37; --warning: #9a6700;
+      --danger: #d1242f; --info: #0969da;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif; overflow: hidden; }
 
@@ -139,6 +145,18 @@
 // CONSTANTES & HELPERS
 // ═══════════════════════════════════
 const C = { accent:'#e8970a', success:'#3fb950', warning:'#d29922', danger:'#f85149', info:'#58a6ff', muted:'#8b949e', text:'#e6edf3' };
+
+// ═══════════════════════════════════
+// THÈME (sombre / clair)
+// ═══════════════════════════════════
+const getTheme = () => localStorage.getItem('gmao-theme') || 'dark';
+function applyTheme(t) {
+  document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', t === 'light' ? '#f2f4f7' : '#0d1117');
+}
+function setTheme(t) { localStorage.setItem('gmao-theme', t); applyTheme(t); render(); }
+applyTheme(getTheme());
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
 const today = () => new Date().toISOString().split('T')[0];
@@ -1777,7 +1795,11 @@ function quickPreventif(eqId) {
         Cochez les gammes terminées · la prochaine échéance sera recalculée automatiquement
       </div>
       <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:14px">${rows}</div>
-      <div class="fi"><label class="fl">Opérateur</label><select class="sel" id="qpv-tech">${operateurOptions('')}</select></div>
+      <div style="display:flex;gap:8px">
+        <div class="fi" style="flex:1"><label class="fl">Début *</label><input class="inp" type="datetime-local" id="qpv-debut"/></div>
+        <div class="fi" style="flex:1"><label class="fl">Fin *</label><input class="inp" type="datetime-local" id="qpv-fin"/></div>
+      </div>
+      <div class="fi"><label class="fl">Opérateur *</label><select class="sel" id="qpv-tech">${operateurOptions('')}</select></div>
       <button class="bp" onclick="saveQuickPreventif('${eqId}')">Valider les gammes cochées</button>
     </div>
   `);
@@ -1785,18 +1807,27 @@ function quickPreventif(eqId) {
 
 function saveQuickPreventif(eqId) {
   const tech = document.getElementById('qpv-tech').value;
+  const debut = document.getElementById('qpv-debut')?.value;
+  const fin = document.getElementById('qpv-fin')?.value;
   const list = S.prev.filter(p => p.equipementId === eqId);
+
+  // Contrôles obligatoires
+  const cochees = list.filter(p => document.getElementById('qpv-'+p.id)?.checked);
+  if (cochees.length === 0) { alert('Cochez au moins une gamme à valider.'); return; }
+  if (!debut || !fin) { alert("Renseignez l'heure de début et de fin."); return; }
+  if (new Date(fin) <= new Date(debut)) { alert("L'heure de fin doit être après l'heure de début."); return; }
+  if (!tech) { alert('Sélectionnez un opérateur.'); return; }
+
+  const dureeH = Math.round(((new Date(fin) - new Date(debut)) / 3600000) * 100) / 100;
   let count = 0;
   let alertesStock = [];
-  list.forEach(p => {
-    const cb = document.getElementById('qpv-'+p.id);
-    if (cb && cb.checked) {
+  cochees.forEach(p => {
+    {
       const d = new Date(); d.setDate(d.getDate()+(FREQ_DAYS[p.frequence]||30));
       let nextDate = d.toISOString().split('T')[0];
       // Appliquer décalage jour ouvré
       nextDate = jourOuvreProche(nextDate);
-      const updated = {...p, dernierPassage:today(), prochaineEcheance:nextDate};
-      if (tech) updated.technicien = tech;
+      const updated = {...p, dernierPassage:today(), prochaineEcheance:nextDate, dateDebut:debut, dateFin:fin, dureeH, technicien:tech};
       S.prev = S.prev.map(x=>x.id===p.id?updated:x);
       syncSave('prev', updated);
       // Consommer les pièces prévues
@@ -2414,10 +2445,39 @@ function pgPreventif() {
 
 function marquerFait(id) {
   const p=S.prev.find(x=>x.id===id); if (!p) return;
+  const eq=S.eq.find(e=>e.id===p.equipementId);
+  openModal(`
+    <div class="mh"></div>
+    <div class="mhd"><span class="mt">✅ Valider — ${esc(p.tache)}</span><button class="mc" onclick="closeModal()">×</button></div>
+    <div class="mb">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">${esc(eq?.nom||'—')} · ${p.frequence}</div>
+      <div style="display:flex;gap:8px">
+        <div class="fi" style="flex:1"><label class="fl">Début *</label><input class="inp" type="datetime-local" id="mf-debut"/></div>
+        <div class="fi" style="flex:1"><label class="fl">Fin *</label><input class="inp" type="datetime-local" id="mf-fin"/></div>
+      </div>
+      <div class="fi"><label class="fl">Opérateur *</label><select class="sel" id="mf-tech">${operateurOptions(p.technicien)}</select></div>
+      <button class="bp" onclick="confirmMarquerFait('${id}')">✓ Valider ce préventif</button>
+    </div>
+  `);
+}
+
+function confirmMarquerFait(id) {
+  const p=S.prev.find(x=>x.id===id); if (!p) return;
+  const debut = document.getElementById('mf-debut')?.value;
+  const fin = document.getElementById('mf-fin')?.value;
+  const tech = document.getElementById('mf-tech')?.value;
+  if (!debut || !fin) { alert("Renseignez l'heure de début et de fin."); return; }
+  if (new Date(fin) <= new Date(debut)) { alert("L'heure de fin doit être après l'heure de début."); return; }
+  if (!tech) { alert('Sélectionnez un opérateur.'); return; }
+  const dureeH = Math.round(((new Date(fin) - new Date(debut)) / 3600000) * 100) / 100;
   const d=new Date(); d.setDate(d.getDate()+(FREQ_DAYS[p.frequence]||30));
-  const updated = {...p, dernierPassage:today(), prochaineEcheance:d.toISOString().split('T')[0]};
+  const nextDate = jourOuvreProche(d.toISOString().split('T')[0]);
+  const updated = {...p, dernierPassage:today(), prochaineEcheance:nextDate, dateDebut:debut, dateFin:fin, dureeH, technicien:tech};
   S.prev=S.prev.map(x=>x.id===id?updated:x);
-  syncSave('prev', updated); render();
+  syncSave('prev', updated);
+  closeModal();
+  showToast('Préventif validé ✓', C.success);
+  render();
 }
 
 // Coche/décoche toutes les machines d'un site dans la modale de gamme préventive
@@ -3707,6 +3767,15 @@ function pgSettings() {
         `).join('')}
     </div>
     ` : ''}
+
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">🎨 APPARENCE</div>
+    <div class="card" style="padding:14px">
+      <div style="display:flex;gap:8px">
+        <button class="bs" onclick="setTheme('dark')" style="flex:1;padding:12px;${getTheme()!=='light'?`background:rgba(232,151,10,.15);border:1px solid rgba(232,151,10,.45);color:${C.accent};font-weight:700`:''}">🌙 Sombre</button>
+        <button class="bs" onclick="setTheme('light')" style="flex:1;padding:12px;${getTheme()==='light'?`background:rgba(232,151,10,.15);border:1px solid rgba(232,151,10,.45);color:${C.accent};font-weight:700`:''}">☀️ Clair</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px">Le choix est mémorisé sur cet appareil.</div>
+    </div>
 
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">🔒 COMPTE</div>
     <div class="card">
