@@ -3940,13 +3940,15 @@ function pgSettings() {
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">🗓 INDISPONIBILITÉS DE L'ÉQUIPE</div>
     <div class="card">
       ${(()=>{
-        const autres = S.indispoPerso.filter(i=>i.user_id!==currentUser.id);
-        if (autres.length===0) return `<div style="padding:14px;font-size:12px;color:var(--muted);text-align:center;font-style:italic">Aucune indisponibilité déclarée par l'équipe</div>`;
-        const parPersonne = {};
-        autres.forEach(i=>{ (parPersonne[i.user_id]=parPersonne[i.user_id]||[]).push(i); });
-        return Object.entries(parPersonne).map(([uid,list])=>`
-          <div style="padding:8px 14px;background:var(--surface2);font-size:11px;font-weight:700;color:${C.accent};text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border)22">${esc(nomParUserId(uid))}</div>
-          ${list.map(i=>`
+        const membres = [...S.operateurs].sort((a,b)=>operateurLabel(a).localeCompare(operateurLabel(b),'fr'));
+        if (membres.length===0) return `<div style="padding:14px;font-size:12px;color:var(--muted);text-align:center;font-style:italic">Aucun compte chargé</div>`;
+        return membres.map(m=>{
+          const list = S.indispoPerso.filter(i=>i.user_id===m.id).sort((a,b)=>new Date(b.date_debut)-new Date(a.date_debut));
+          return `
+          <div style="padding:8px 14px;background:var(--surface2);font-size:11px;font-weight:700;color:${C.accent};text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border)22">${esc(operateurLabel(m))} <span style="color:var(--muted);font-weight:600;text-transform:none">· ${esc(m.role||'lecteur')}</span></div>
+          ${list.length===0
+            ? `<div style="padding:10px 14px;border-bottom:1px solid var(--border)22;font-size:12px;color:var(--muted);font-style:italic">Aucune indisponibilité déclarée</div>`
+            : list.map(i=>`
             <div style="padding:12px 14px;border-bottom:1px solid var(--border)22;display:flex;justify-content:space-between;align-items:center;gap:10px">
               <div style="flex:1">
                 <div style="font-size:13px;font-weight:600">${fmt(i.date_debut)} → ${fmt(i.date_fin)}</div>
@@ -3954,7 +3956,7 @@ function pgSettings() {
               </div>
               <button onclick="delMyIndispo('${i.id}')" style="background:transparent;border:1px solid ${C.danger}44;color:${C.danger};font-size:11px;padding:5px 9px;border-radius:6px;cursor:pointer">✕</button>
             </div>`).join('')}
-        `).join('');
+        `;}).join('');
       })()}
     </div>
     ` : ''}
