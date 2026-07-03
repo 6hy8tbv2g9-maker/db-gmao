@@ -1052,6 +1052,7 @@ const S = {
   otFilter:'all',
   prevSite:'all',
   statsPeriod: '30',  // jours
+  weekOffset: 0,      // décalage semaine (0 = semaine courante)
   loading: true,
   online: navigator.onLine,
 };
@@ -1111,6 +1112,7 @@ const TABS=[
   {id:'equipements',ic:'⚙',lb:'Machines'},
   {id:'ots',ic:'🔧',lb:'OT'},
   {id:'preventif',ic:'📅',lb:'Prév.'},
+  {id:'calendar',ic:'🗓',lb:'Cal.'},
   {id:'stock',ic:'📦',lb:'Stock'},
   {id:'stats',ic:'📊',lb:'Stats'},
   {id:'settings',ic:'⚙️',lb:'Régl.'},
@@ -1144,7 +1146,7 @@ function render() {
   const focusedId = document.activeElement?.id;
   const focusedVal = document.activeElement?.value;
 
-  const fn = {dashboard:pgDashboard,equipements:pgEquipements,ots:pgOTs,preventif:pgPreventif,stock:pgStock,stats:pgStats,settings:pgSettings};
+  const fn = {dashboard:pgDashboard,equipements:pgEquipements,ots:pgOTs,preventif:pgPreventif,calendar:pgCalendar,stock:pgStock,stats:pgStats,settings:pgSettings};
   document.getElementById('content').innerHTML = (fn[S.page]||pgDashboard)();
 
   // Restore search focus after re-render
@@ -1159,6 +1161,112 @@ function render() {
       if (on !== pushOn) { pushOn = on; render(); }
     });
   }
+}
+
+// ═══════════════════════════════════
+// CALENDRIER (vue semaine ISO)
+// ═══════════════════════════════════
+
+function isoWeek(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const day = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+}
+
+function mondayOf(date) {
+  const d = new Date(date);
+  d.setHours(0,0,0,0);
+  const day = d.getDay() || 7;
+  d.setDate(d.getDate() - day + 1);
+  return d;
+}
+
+function weekDays(offset=0) {
+  const monday = mondayOf(new Date());
+  monday.setDate(monday.getDate() + offset*7);
+  return Array.from({length:7}, (_,i) => {
+    const d = new Date(monday); d.setDate(monday.getDate()+i); return d;
+  });
+}
+
+const dateKey = (d) => {
+  const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), j = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${j}`;
+};
+
+function planningSemaine(offset=0) {
+  const jours = weekDays(offset);
+  return jours.map(d => {
+    const k = dateKey(d);
+    const prevs = S.prev.filter(p => p.prochaineEcheance === k);
+    const ots = S.ots.filter(o => o.datePrevue === k && !['terminé','annulé'].includes(o.statut));
+    return { date: d, prevs, ots };
+  });
+}
+
+function pgCalendar() {
+  const jours = planningSemaine(S.weekOffset);
+  const lundi = jours[0].date;
+  const dimanche = jours[6].date;
+  const num = isoWeek(jours[3].date);
+  const annee = jours[3].date.getFullYear();
+  const mois = lundi.toLocaleDateString('fr-FR', { month: 'long' });
+  const aujKey = dateKey(new Date());
+  const noms = ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
+
+  const jourCard = (j, idx) => {
+    const isToday = dateKey(j.date) === aujKey;
+    const isWE = idx >= 5;
+    const total = j.prevs.length + j.ots.length;
+    return `
+      <div class="card" style="margin:0 14px 10px;padding:12px;${isToday?`border-left:3px solid ${C.accent}`:isWE?'opacity:.7':''}">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:${total?10:0}px">
+          <div>
+            <span style="font-size:13px;font-weight:800;color:${isToday?C.accent:'var(--text)'}">${noms[idx]} ${j.date.getDate()}</span>
+            ${isToday?`<span style="font-size:10px;color:${C.accent};margin-left:6px;font-weight:700">AUJOURD'HUI</span>`:''}
+          </div>
+          <span style="font-size:11px;color:var(--muted)">${total===0?'—':`${total} tâche${total>1?'s':''}`}</span>
+        </div>
+        ${j.prevs.map(p => {
+          const eq = S.eq.find(e=>e.id===p.equipementId);
+          return `<div onclick="modalPrev('${p.id}')" style="cursor:pointer;display:flex;gap:8px;align-items:center;padding:8px;background:rgba(63,185,80,.08);border-left:3px solid ${C.success};border-radius:6px;margin-bottom:5px">
+            <span style="font-size:14px">📅</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.tache)}</div>
+              <div style="font-size:10px;color:var(--muted)">${esc(eq?.nom||'—')}${eq?.site?` · ${esc(eq.site)}`:''}</div>
+            </div>
+          </div>`;
+        }).join('')}
+        ${j.ots.map(o => {
+          const eq = S.eq.find(e=>e.id===o.equipementId);
+          const col = o.priorite==='urgent'?C.danger:C.info;
+          return `<div onclick="modalOT('${o.id}')" style="cursor:pointer;display:flex;gap:8px;align-items:center;padding:8px;background:rgba(88,166,255,.08);border-left:3px solid ${col};border-radius:6px;margin-bottom:5px">
+            <span style="font-size:14px">🔧</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span class="mono" style="color:${C.accent}">${esc(o.numero)}</span> ${esc(o.titre)}</div>
+              <div style="font-size:10px;color:var(--muted)">${esc(eq?.nom||'—')} · ${o.priorite}</div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`;
+  };
+
+  return `
+    <div class="ph">
+      <div>
+        <div class="pt">Semaine ${num}</div>
+        <div class="ps">${lundi.getDate()} → ${dimanche.getDate()} ${mois} ${annee}</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;padding:0 14px 12px;align-items:center">
+      <button class="bs" onclick="S.weekOffset--;render()" style="padding:8px 12px">← Préc.</button>
+      <button class="bs" onclick="S.weekOffset=0;render()" style="flex:1;padding:8px;background:${S.weekOffset===0?`rgba(232,151,10,.15)`:'var(--surface2)'};border:1px solid ${S.weekOffset===0?`rgba(232,151,10,.4)`:'var(--border)'};color:${S.weekOffset===0?C.accent:'var(--text)'};font-weight:700">Cette semaine</button>
+      <button class="bs" onclick="S.weekOffset++;render()" style="padding:8px 12px">Suiv. →</button>
+    </div>
+    ${jours.map(jourCard).join('')}
+    <div class="sp"></div>`;
 }
 
 // ═══════════════════════════════════
@@ -1224,6 +1332,29 @@ function pgDashboard() {
       ${kpi(prev30.length,'Maintenances 30j',prev30.filter(p=>daysUntil(p.prochaineEcheance)<=7).length+' sous 7j',prev30.filter(p=>daysUntil(p.prochaineEcheance)<=7).length?C.danger:C.info,"go('preventif')")}
       ${kpi(sAlt.length,'Alertes stock',sAlt.length?'Réappro nécessaire':'Stock OK',sAlt.length?C.warning:C.success,"go('stock')")}
     </div>
+
+    ${(()=>{
+      const jours = planningSemaine(0);
+      const total = jours.reduce((s,j)=>s+j.prevs.length+j.ots.length,0);
+      if (total===0) return '';
+      const numSem = isoWeek(jours[3].date);
+      const jourMini = (j, idx) => {
+        const noms = ['L','M','M','J','V','S','D'];
+        const isToday = dateKey(j.date) === dateKey(new Date());
+        const n = j.prevs.length + j.ots.length;
+        return `<div onclick="go('calendar')" style="cursor:pointer;flex:1;text-align:center;padding:9px 4px;border-radius:8px;background:${isToday?`rgba(232,151,10,.15)`:n?'var(--surface2)':'transparent'};border:1px solid ${isToday?`rgba(232,151,10,.4)`:'transparent'}">
+          <div style="font-size:10px;color:var(--muted);font-weight:700">${noms[idx]}</div>
+          <div style="font-size:15px;font-weight:800;color:${isToday?C.accent:'var(--text)'};margin-top:2px">${j.date.getDate()}</div>
+          <div style="font-size:10px;margin-top:3px;color:${n?C.accent:'var(--muted)'};font-weight:${n?'700':'400'}">${n||'—'}</div>
+        </div>`;
+      };
+      return `
+        <div class="st" style="display:flex;justify-content:space-between;align-items:baseline">
+          <span>📅 SEMAINE ${numSem}</span>
+          <span onclick="go('calendar')" style="cursor:pointer;font-size:11px;color:${C.info};font-weight:600;text-transform:none;letter-spacing:0">Détails →</span>
+        </div>
+        <div class="card" style="padding:10px;display:flex;gap:4px">${jours.map(jourMini).join('')}</div>`;
+    })()}
 
     ${actifs.length?`<div class="st">OT EN COURS</div><div class="card">${actifs.slice(0,5).map(otRow).join('')}</div>`:''}
     ${prev30.length?`<div class="st">MAINTENANCES À VENIR</div><div class="card">${[...prev30].sort((a,b)=>new Date(a.prochaineEcheance)-new Date(b.prochaineEcheance)).slice(0,5).map(prevRow).join('')}</div>`:''}
@@ -1709,7 +1840,6 @@ function saveQuickPanne(eqId, numero) {
   };
   S.ots = [...S.ots, newOT];
   syncSave('ots', newOT);
-  notifyNewOT(newOT);
 
   // Mettre à jour le statut de la machine
   const newStatut = document.getElementById('qp-statut').value;
@@ -1982,6 +2112,7 @@ function showAideMemoire() {
       ])}
       ${title('Accès rapides')}
       ${memoTable([
+        ['Voir la semaine','Onglet 🗓 Cal. — vue semaine ISO.'],
         ['Voir les alertes du jour','Onglet Accueil.'],
         ['Consulter une fiche','Appuyez sur l\'élément dans une liste.'],
         ['Lire les indicateurs','Onglet Stats.'],
@@ -2223,7 +2354,7 @@ function saveOT(id) {
   };
   const row = id ? {...S.ots.find(o=>o.id===id), ...d} : {id:uid(), numero:nextOT(S.ots), dateCreation:today(), ...d};
   if (id) S.ots=S.ots.map(o=>o.id===id?row:o);
-  else { S.ots=[...S.ots, row]; notifyNewOT(row); }
+  else { S.ots=[...S.ots, row]; }
   syncSave('ots', row);
   // Si création : déplacer les pièces temporaires vers l'OT créé
   if (!id && window._tmpPieces && window._tmpPieces.length > 0) {
