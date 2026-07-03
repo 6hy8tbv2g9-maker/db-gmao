@@ -843,6 +843,66 @@ function operateurOptions(selected) {
   return opts;
 }
 
+// ═══════════════════════════════════
+// INDISPONIBILITÉS PERSONNELLES
+// (chacun gère sa fiche · managers voient tout — RLS côté base)
+// ═══════════════════════════════════
+async function loadIndispoPerso() {
+  if (!cloudEnabled) { S.indispoPerso = []; return; }
+  try {
+    const { data, error } = await sb.from('indispos_perso').select('*').order('date_debut', { ascending: false });
+    if (!error && data) S.indispoPerso = data;
+  } catch(e) { console.warn('loadIndispoPerso:', e); }
+}
+
+const nomParUserId = (uid) => {
+  const op = S.operateurs.find(o => o.id === uid);
+  return op ? operateurLabel(op) : '(inconnu)';
+};
+
+function addMyIndispoModal() {
+  openModal(`
+    <div class="mh"></div>
+    <div class="mhd"><span class="mt">🗓 Ajouter une indisponibilité</span><button class="mc" onclick="closeModal()">×</button></div>
+    <div class="mb">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Congés, formation, absence… Visible par vous et par les managers.</div>
+      <div style="display:flex;gap:8px">
+        <div class="fi" style="flex:1"><label class="fl">Du *</label><input class="inp" type="date" id="mi-debut"/></div>
+        <div class="fi" style="flex:1"><label class="fl">Au *</label><input class="inp" type="date" id="mi-fin"/></div>
+      </div>
+      <div class="fi"><label class="fl">Motif</label><input class="inp" id="mi-motif" placeholder="Ex: congés, formation…"/></div>
+      <button class="bp" onclick="saveMyIndispo()">Ajouter</button>
+    </div>
+  `);
+}
+
+async function saveMyIndispo() {
+  const debut = document.getElementById('mi-debut')?.value;
+  const fin = document.getElementById('mi-fin')?.value;
+  const motif = document.getElementById('mi-motif')?.value || '';
+  if (!debut || !fin) { alert('Renseignez les deux dates.'); return; }
+  if (new Date(fin) < new Date(debut)) { alert('La date de fin doit être après le début.'); return; }
+  try {
+    const { error } = await sb.from('indispos_perso').insert({ user_id: currentUser.id, date_debut: debut, date_fin: fin, motif });
+    if (error) { alert('Erreur : ' + error.message); return; }
+    await loadIndispoPerso();
+    closeModal();
+    showToast('Indisponibilité ajoutée', C.success);
+    render();
+  } catch(e) { alert('Erreur lors de l\'ajout'); }
+}
+
+async function delMyIndispo(id) {
+  if (!confirm('Supprimer cette indisponibilité ?')) return;
+  try {
+    const { error } = await sb.from('indispos_perso').delete().eq('id', id);
+    if (error) { alert('Erreur : ' + error.message); return; }
+    await loadIndispoPerso();
+    showToast('Supprimée', C.success);
+    render();
+  } catch(e) { alert('Erreur'); }
+}
+
 // Mapping camelCase JS ⇄ snake_case DB
 const camelToSnake = {
   equipementId: 'equipement_id',
@@ -987,6 +1047,7 @@ const S = {
   page:'dashboard',
   eq: [], ots: [], prev: [], stock: [], otPieces: [], settings: [], docs: [], indisp: [],
   operateurs: [],
+  indispoPerso: [],
   search:{eq:'',ots:'',prev:'',stock:''},
   otFilter:'all',
   prevSite:'all',
@@ -1851,6 +1912,91 @@ function saveQuickPreventif(eqId) {
     setTimeout(() => alert(`⚠ Stock insuffisant pour : ${alertesStock.join(', ')}`), 500);
   }
   render();
+}
+
+// ═══════════════════════════════════
+// AIDE-MÉMOIRE (par rôle)
+// ═══════════════════════════════════
+function showAideMemoire() {
+  const memoRow = (label, val) => `
+    <div style="display:flex;border-bottom:1px solid var(--border)22">
+      <div style="width:42%;padding:9px 10px;background:var(--surface2);font-size:12px;font-weight:700;flex-shrink:0">${label}</div>
+      <div style="flex:1;padding:9px 10px;font-size:12px;color:var(--muted)">${val}</div>
+    </div>`;
+  const memoTable = rows => `<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:14px">${rows.map(r=>memoRow(r[0],r[1])).join('')}</div>`;
+  const title = t => `<div style="font-size:12px;font-weight:800;color:${C.accent};text-transform:uppercase;letter-spacing:.05em;margin:4px 0 8px">${t}</div>`;
+
+  let content = '';
+  if (currentRole === 'manager') {
+    content = `
+      ${title('Gestion des comptes (sur Supabase)')}
+      ${memoTable([
+        ['Créer un compte','Authentication → Users → Add user (Auto Confirm coché).'],
+        ['Changer un rôle',"SQL Editor : UPDATE profils SET role = '...' WHERE email ILIKE '...';"],
+        ['Réinitialiser un mot de passe','Authentication → cliquer sur l\'utilisateur.'],
+        ['Rôles disponibles','lecteur, technicien, manager.'],
+      ])}
+      ${title('Fonctions exclusives (dans l\'app)')}
+      ${memoTable([
+        ['Supprimer','Bouton rouge en bas des fiches.'],
+        ['Tarif horaire','Réglages → Paramètres généraux.'],
+        ['Indisponibilités','Réglages → section Indisponibilités.'],
+        ['Équipe / opérateurs','Réglages → section Équipe (noms + liste opérateurs).'],
+        ['Supervision','Onglet Stats + rapports PDF.'],
+      ])}
+      <div style="background:rgba(124,58,237,.08);border-left:3px solid #7c3aed;border-radius:8px;padding:10px;font-size:12px;color:var(--muted)">
+        <b style="color:var(--text)">Bonne pratique :</b> exporte les données régulièrement, crée les comptes au plus juste, et réserve le rôle manager aux personnes de confiance.
+      </div>`;
+  } else if (currentRole === 'technicien') {
+    content = `
+      ${title('Actions rapides')}
+      ${memoTable([
+        ['Déclarer une panne','Scanner la machine, puis Déclarer panne.'],
+        ['Créer un OT','Onglet OT, bouton +.'],
+        ['Valider un OT','Scanner la machine, puis Valider OT.'],
+        ['Valider un préventif','Scanner la machine, puis Valider préventif (cocher les gammes + heures début/fin).'],
+        ['Ajouter une pièce au stock','Onglet Stock, bouton +.'],
+        ['Joindre un document','Fiche machine ou OT, + Ajouter un document.'],
+        ['Sortir un rapport','Onglet Stats, section Rapport PDF.'],
+      ])}
+      ${title('Ce que vous pouvez faire')}
+      ${memoTable([
+        ['Consulter','Tout : machines, OT, préventifs, stock, stats.'],
+        ['Créer / modifier','OT, préventifs, équipements, pièces de stock.'],
+        ['Valider','OT et préventifs (avec consommation du stock).'],
+        ['Supprimer','Non — réservé à Corentin et/ou Pierre.'],
+        ['Réglages avancés','Non — tarif et indisponibilités réservés à Corentin et/ou Pierre.'],
+      ])}
+      <div style="background:rgba(232,151,10,.08);border-left:3px solid ${C.accent};border-radius:8px;padding:10px;font-size:12px;color:var(--muted)">
+        <b style="color:var(--text)">Un doute, un blocage ?</b> Contactez Corentin et/ou Pierre. Eux seuls peuvent supprimer des données, modifier le tarif horaire et créer de nouveaux comptes.
+      </div>`;
+  } else {
+    content = `
+      ${title('Ce que vous pouvez faire')}
+      ${memoTable([
+        ['Consulter','Machines, OT, préventifs, stock, statistiques.'],
+        ['Historique','Scanner une machine, puis Historique.'],
+        ['Rapports PDF','Onglet Stats, section Rapport PDF.'],
+        ['Compte','Changer votre mot de passe, activer un code PIN.'],
+        ['Modifier des données','Non — accès en consultation uniquement.'],
+      ])}
+      ${title('Accès rapides')}
+      ${memoTable([
+        ['Voir les alertes du jour','Onglet Accueil.'],
+        ['Consulter une fiche','Appuyez sur l\'élément dans une liste.'],
+        ['Lire les indicateurs','Onglet Stats.'],
+        ['Changer mot de passe','Onglet Régl., section Compte.'],
+      ])}
+      <div style="background:rgba(88,166,255,.08);border-left:3px solid ${C.info};border-radius:8px;padding:10px;font-size:12px;color:var(--muted)">
+        <b style="color:var(--text)">Une question sur les données ?</b> Adressez-vous à un technicien ou à Corentin et/ou Pierre.
+      </div>`;
+  }
+
+  openModal(`
+    <div class="mh"></div>
+    <div class="mhd"><span class="mt">📋 Aide-mémoire — ${esc(currentRole)}</span><button class="mc" onclick="closeModal()">×</button></div>
+    <div class="mb">${content}<div style="height:6px"></div></div>
+  `);
 }
 
 function showHistorique(eqId) {
@@ -3707,7 +3853,7 @@ function pgSettings() {
     </div>
 
     ${canManage() ? `
-    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">📅 INDISPONIBILITÉS</div>
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">📅 FERMETURES SITE (décalent les préventifs)</div>
     <div class="card">
       <div style="padding:14px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border)22">
         Périodes d'absence (vacances, formations…). Les préventifs qui tombent pendant ces périodes sont automatiquement décalés au jour ouvré le plus proche.
@@ -3767,6 +3913,56 @@ function pgSettings() {
         `).join('')}
     </div>
     ` : ''}
+
+    ${currentUser ? `
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">🗓 MES INDISPONIBILITÉS</div>
+    <div class="card">
+      ${(()=>{
+        const miens = S.indispoPerso.filter(i=>i.user_id===currentUser.id);
+        return miens.length===0
+          ? `<div style="padding:14px;font-size:12px;color:var(--muted);text-align:center;font-style:italic">Aucune indisponibilité déclarée</div>`
+          : miens.map(i=>`
+            <div style="padding:12px 14px;border-bottom:1px solid var(--border)22;display:flex;justify-content:space-between;align-items:center;gap:10px">
+              <div style="flex:1">
+                <div style="font-size:13px;font-weight:600">${fmt(i.date_debut)} → ${fmt(i.date_fin)}</div>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(i.motif||'Indisponible')}</div>
+              </div>
+              <button onclick="delMyIndispo('${i.id}')" style="background:transparent;border:1px solid ${C.danger}44;color:${C.danger};font-size:11px;padding:5px 9px;border-radius:6px;cursor:pointer">✕</button>
+            </div>`).join('');
+      })()}
+      <div style="padding:14px">
+        <button class="bs" onclick="addMyIndispoModal()" style="width:100%;background:rgba(232,151,10,.12);border:1px solid rgba(232,151,10,.35);color:${C.accent}">+ Déclarer une indisponibilité</button>
+      </div>
+    </div>
+    ` : ''}
+
+    ${canManage() ? `
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">🗓 INDISPONIBILITÉS DE L'ÉQUIPE</div>
+    <div class="card">
+      ${(()=>{
+        const autres = S.indispoPerso.filter(i=>i.user_id!==currentUser.id);
+        if (autres.length===0) return `<div style="padding:14px;font-size:12px;color:var(--muted);text-align:center;font-style:italic">Aucune indisponibilité déclarée par l'équipe</div>`;
+        const parPersonne = {};
+        autres.forEach(i=>{ (parPersonne[i.user_id]=parPersonne[i.user_id]||[]).push(i); });
+        return Object.entries(parPersonne).map(([uid,list])=>`
+          <div style="padding:8px 14px;background:var(--surface2);font-size:11px;font-weight:700;color:${C.accent};text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border)22">${esc(nomParUserId(uid))}</div>
+          ${list.map(i=>`
+            <div style="padding:12px 14px;border-bottom:1px solid var(--border)22;display:flex;justify-content:space-between;align-items:center;gap:10px">
+              <div style="flex:1">
+                <div style="font-size:13px;font-weight:600">${fmt(i.date_debut)} → ${fmt(i.date_fin)}</div>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(i.motif||'Indisponible')}</div>
+              </div>
+              <button onclick="delMyIndispo('${i.id}')" style="background:transparent;border:1px solid ${C.danger}44;color:${C.danger};font-size:11px;padding:5px 9px;border-radius:6px;cursor:pointer">✕</button>
+            </div>`).join('')}
+        `).join('');
+      })()}
+    </div>
+    ` : ''}
+
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">📖 AIDE</div>
+    <div class="card" style="padding:14px">
+      <button class="bs" onclick="showAideMemoire()" style="width:100%;background:rgba(88,166,255,.12);border:1px solid rgba(88,166,255,.35);color:${C.info};padding:12px">📋 Aide-mémoire ${currentRole}</button>
+    </div>
 
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">🎨 APPARENCE</div>
     <div class="card" style="padding:14px">
@@ -3957,6 +4153,7 @@ async function initApp() {
       S.eq = data.eq; S.ots = data.ots; S.prev = data.prev; S.stock = data.stock;
       S.otPieces = data.otPieces || []; S.settings = data.settings || []; S.docs = data.docs || []; S.indisp = data.indisp || [];
       await loadOperateurs();
+      await loadIndispoPerso();
       saveAll();
       S.loading = false;
       subscribeAll();
