@@ -1164,6 +1164,67 @@ function render() {
 }
 
 // ═══════════════════════════════════
+// PLANNINGS HEBDO (équipe + production)
+// Deux emplacements fixes dans le bucket : le nouvel upload remplace l'ancien.
+// ═══════════════════════════════════
+const PLANNING_TYPES = {
+  equipe:     { label: 'Planning équipe',     icon: '👥', key: 'plannings/equipe'     },
+  production: { label: 'Planning production', icon: '🍺', key: 'plannings/production' },
+};
+
+async function uploadPlanning(type, file) {
+  if (!file || !PLANNING_TYPES[type]) return;
+  if (!canManage()) { alert("Réservé aux managers."); return; }
+  const ext = (file.name.split('.').pop() || 'pdf').toLowerCase();
+  const path = `${PLANNING_TYPES[type].key}.${ext}`;
+  showToast('Envoi…', C.info);
+  try {
+    // Nettoyer les anciennes versions (autres extensions possibles)
+    for (const e of ['pdf','png','jpg','jpeg','webp','heic']) {
+      if (e !== ext) await sb.storage.from(BUCKET).remove([`${PLANNING_TYPES[type].key}.${e}`]).catch(()=>{});
+    }
+    const { error } = await sb.storage.from(BUCKET).upload(path, file, { upsert: true, contentType: file.type });
+    if (error) { alert('Erreur : ' + error.message); return; }
+    await setSetting(`planning-${type}`, JSON.stringify({ path, ext, dateMaj: new Date().toISOString() }));
+    showToast('Planning mis à jour', C.success);
+    render();
+  } catch(e) { alert('Erreur : ' + e.message); }
+}
+
+async function openPlanning(type) {
+  const meta = JSON.parse(getSetting(`planning-${type}`, '') || 'null');
+  if (!meta) { alert('Aucun planning enregistré.'); return; }
+  showToast('Ouverture…', C.info);
+  try {
+    const { data, error } = await sb.storage.from(BUCKET).createSignedUrl(meta.path, 3600);
+    if (error || !data) { alert('Impossible d\'ouvrir'); return; }
+    window.open(data.signedUrl, '_blank');
+  } catch(e) { alert('Erreur'); }
+}
+
+// Rendu compact d'un planning (dans le calendrier ou l'accueil)
+function planningTile(type) {
+  const info = PLANNING_TYPES[type];
+  const meta = JSON.parse(getSetting(`planning-${type}`, '') || 'null');
+  const inputId = `pl-${type}-input`;
+  return `
+    <div class="card" style="margin:0 14px 10px;padding:12px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:22px">${info.icon}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:700">${info.label}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">${meta ? 'Mis à jour le ' + fmt(meta.dateMaj.split('T')[0]) : 'Aucun fichier enregistré'}</div>
+        </div>
+        ${meta ? `<button class="bs" onclick="openPlanning('${type}')" style="padding:8px 12px">Ouvrir</button>` : ''}
+        ${canManage() ? `
+          <input type="file" id="${inputId}" style="display:none" accept="application/pdf,image/*" onchange="if(this.files[0])uploadPlanning('${type}', this.files[0])"/>
+          <button class="bs" onclick="document.getElementById('${inputId}').click()" style="padding:8px 12px;background:rgba(232,151,10,.12);border:1px solid rgba(232,151,10,.35);color:${C.accent}">${meta ? 'Remplacer' : 'Ajouter'}</button>
+        ` : ''}
+      </div>
+    </div>`;
+}
+
+// ═══════════════════════════════════
 // CALENDRIER (vue semaine ISO)
 // ═══════════════════════════════════
 
@@ -1265,6 +1326,7 @@ function pgCalendar() {
       <button class="bs" onclick="S.weekOffset=0;render()" style="flex:1;padding:8px;background:${S.weekOffset===0?`rgba(232,151,10,.15)`:'var(--surface2)'};border:1px solid ${S.weekOffset===0?`rgba(232,151,10,.4)`:'var(--border)'};color:${S.weekOffset===0?C.accent:'var(--text)'};font-weight:700">Cette semaine</button>
       <button class="bs" onclick="S.weekOffset++;render()" style="padding:8px 12px">Suiv. →</button>
     </div>
+    ${S.weekOffset===0 ? planningTile('equipe') + planningTile('production') : ''}
     ${jours.map(jourCard).join('')}
     <div class="sp"></div>`;
 }
