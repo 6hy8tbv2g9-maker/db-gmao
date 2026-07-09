@@ -239,7 +239,7 @@ function jourOuvreProche(dateStr) {
 const fmt = d => d ? new Date(d).toLocaleDateString('fr-FR') : '—';
 const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
-const statusCol = s => ({'en service':C.success,'en panne':C.danger,'en maintenance':C.warning,'hors service':C.muted,'actif':C.info,'ouvert':C.info,'en cours':C.warning,'terminé':C.success,'annulé':C.muted}[s]||C.muted);
+const statusCol = s => ({'en service':C.success,'en panne':C.danger,'en maintenance':C.warning,'hors service':C.muted,'actif':C.info,'ouvert':C.info,'en cours':C.warning,'en pause':'#a78bfa','terminé':C.success,'annulé':C.muted}[s]||C.muted);
 const prioCol   = p => ({'urgent':C.danger,'haute':'#ff9580','normale':C.info,'basse':C.muted}[p]||C.muted);
 const badge     = (l,col) => `<span class="badge" style="color:${col};background:${col}22;border:1px solid ${col}44">${esc(l)}</span>`;
 const eqIcon    = t => ({'électrique':'⚡','hydraulique':'💧','pneumatique':'💨','mécanique':'⚙','thermique':'🔥'}[t]||'🔧');
@@ -2262,7 +2262,7 @@ function pgOTs() {
     </div>
     <div class="sc"><input id="ot-search" class="si" placeholder="Rechercher…" value="${esc(S.search.ots)}" oninput="S.search.ots=this.value;render()"/></div>
     <div class="chips">
-      ${['all','actifs','en cours','terminé','annulé'].map(s=>
+      ${['all','actifs','en cours','en pause','terminé','annulé'].map(s=>
         `<button class="chip ${S.otFilter===s?'on':''}" onclick="S.otFilter='${s}';render()">${s==='all'?'Tous':s}</button>`).join('')}
     </div>
     ${list.length===0?`<div class="empty"><div class="empty-i">🔧</div><div>Aucun OT</div></div>`:`
@@ -2341,7 +2341,7 @@ function modalOT(id) {
       </div>
       <div class="g2">
         <div class="fi"><label class="fl">Statut</label><select class="sel" id="otst">
-          ${['actif','en cours','terminé','annulé'].map(s=>`<option ${(f.statut===s || (s==='actif' && f.statut==='ouvert'))?'selected':''}>${s}</option>`).join('')}
+          ${['actif','en cours','en pause','terminé','annulé'].map(s=>`<option ${(f.statut===s || (s==='actif' && f.statut==='ouvert'))?'selected':''}>${s}</option>`).join('')}
         </select></div>
         <div class="fi"><label class="fl">Opérateur</label><select class="sel" id="ottech">${operateurOptions(f.technicien)}</select></div>
       </div>
