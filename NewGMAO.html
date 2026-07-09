@@ -2721,7 +2721,7 @@ function renderDocsSection(parentType, parentId) {
   const tabs = (dossiers.length ? dossiers : ['Général']).map(d => {
     const count = list.filter(x => ((x.dossier||'').trim() || 'Général') === d).length;
     const on = d === current;
-    return `<button onclick="window._docFolder['${key}']='${d.replace(/'/g,"\\'")}';render()" style="
+    return `<button onclick="switchDocFolder('${parentType}','${parentId}','${d.replace(/'/g,"\\'")}')" style="
       flex-shrink:0;padding:6px 12px;border-radius:16px;font-size:12px;font-weight:700;cursor:pointer;
       font-family:-apple-system,sans-serif;white-space:nowrap;border:1px solid ${on?C.accent:'var(--border)'};
       background:${on?'rgba(232,151,10,.15)':'var(--surface2)'};color:${on?C.accent:'var(--muted)'}">
@@ -2744,16 +2744,26 @@ function renderDocsSection(parentType, parentId) {
   `;
 }
 
+// Change de dossier sans re-rendre toute la page (sinon la modale se referme)
+function switchDocFolder(parentType, parentId, dossier) {
+  window._docFolder = window._docFolder || {};
+  window._docFolder[`${parentType}-${parentId}`] = dossier;
+  const container = document.getElementById(`docs-section-${parentType}-${parentId}`);
+  if (container) {
+    const html = renderDocsSection(parentType, parentId);
+    // renderDocsSection retourne un wrapper avec le même id : on remplace juste l'intérieur
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    container.innerHTML = tmp.firstElementChild.innerHTML;
+  }
+}
+
 // Créer un nouveau dossier pour cette machine/OT
 function newFolder(parentType, parentId) {
   const nom = prompt('Nom du nouveau dossier :');
   if (!nom || !nom.trim()) return;
-  const key = `${parentType}-${parentId}`;
-  window._docFolder = window._docFolder || {};
-  window._docFolder[key] = nom.trim();
-  // Créer un doc "fantôme" pour que le dossier existe visuellement — non, plutôt : le dossier apparaît dès qu'on y met un fichier. Ici on stocke juste la sélection.
+  switchDocFolder(parentType, parentId, nom.trim());
   showToast(`Dossier « ${nom.trim()} » sélectionné. Ajoutez-y un document.`, C.info);
-  render();
 }
 
 // Déplacer un document vers un autre dossier
