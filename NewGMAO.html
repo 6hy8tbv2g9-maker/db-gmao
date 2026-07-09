@@ -2474,9 +2474,7 @@ function openAddPieceTmp() {
     <div class="mh"></div>
     <div class="mhd"><span class="mt">Ajouter une pièce</span><button class="mc" onclick="restoreOTForm()">×</button></div>
     <div class="mb">
-      <div class="fi"><label class="fl">Pièce</label><select class="sel" id="addp-piece">
-        ${stocks.map(s => `<option value="${s.id}">${esc(s.designation)} (stock: ${s.quantite})</option>`).join('')}
-      </select></div>
+      ${pieceSearchWidget('addp-piece', stocks)}
       <div class="fi"><label class="fl">Quantité</label><input class="inp" type="number" min="1" id="addp-qte" value="1"/></div>
       <button class="bp" onclick="saveTmpPiece()">Ajouter</button>
     </div>
@@ -2485,6 +2483,7 @@ function openAddPieceTmp() {
 
 function saveTmpPiece() {
   const pieceId = document.getElementById('addp-piece').value;
+  if (!pieceId) { alert('Sélectionnez une pièce.'); return; }
   const qte = Number(document.getElementById('addp-qte').value) || 1;
   const stk = S.stock.find(s => s.id === pieceId);
   if (!stk) return;
@@ -2531,10 +2530,13 @@ function openAddPiece(otId) {
     <div class="mh"></div>
     <div class="mhd"><span class="mt">+ Ajouter une pièce</span><button class="mc" onclick="closeModal();modalOT('${otId}')">×</button></div>
     <div class="mb">
-      <div class="fi"><label class="fl">Pièce *</label><select class="sel" id="ap-id" onchange="updateAPInfo()">
-        <option value="">— Sélectionner —</option>
-        ${stocks.map(s => `<option value="${s.id}">${esc(s.designation)} (${s.reference}) · stock: ${s.quantite}</option>`).join('')}
-      </select></div>
+      ${pieceSearchWidget('ap-id', stocks, id => {
+        const s = S.stock.find(x => x.id === id);
+        if (s) {
+          document.getElementById('ap-pu').value = Number(s.prixUnitaire||0).toFixed(2);
+          document.getElementById('ap-warn').innerHTML = `Stock dispo : <strong style="color:${C.success}">${s.quantite}</strong>`;
+        }
+      })}
       <div class="g2">
         <div class="fi"><label class="fl">Quantité</label><input class="inp" type="number" min="0.01" step="0.01" id="ap-qte" value="1"/></div>
         <div class="fi"><label class="fl">Prix unit. (€)</label><input class="inp" type="number" min="0" step="0.01" id="ap-pu" value="0"/></div>
@@ -2547,12 +2549,7 @@ function openAddPiece(otId) {
 }
 
 function updateAPInfo() {
-  const id = document.getElementById('ap-id').value;
-  const s = S.stock.find(x => x.id === id);
-  if (s) {
-    document.getElementById('ap-pu').value = Number(s.prixUnitaire||0).toFixed(2);
-    document.getElementById('ap-warn').innerHTML = `Stock dispo : <strong style="color:${C.success}">${s.quantite}</strong>`;
-  }
+  // Conservé pour compatibilité éventuelle - la logique est maintenant dans le callback du widget
 }
 
 function saveOTPiece(otId) {
@@ -2741,6 +2738,47 @@ function renderDocsSection(parentType, parentId) {
       <button onclick="document.getElementById('file-input-${parentType}-${parentId}').click()" style="background:rgba(232,151,10,.12);border:1px solid rgba(232,151,10,.35);color:${C.accent};font-size:13px;font-weight:700;padding:9px;border-radius:8px;cursor:pointer;width:100%;font-family:-apple-system,sans-serif">+ Ajouter dans « ${esc(current)} »</button>
       ` : ''}
     </div>
+  `;
+}
+
+// ─── Widget de sélection de pièce avec recherche ───
+// Champ hidden `hiddenId` + input de recherche + liste filtrable
+// Trié par catégorie puis alphabétique
+function pieceSearchWidget(hiddenId, stocks, onSelectFn) {
+  const listId = `pl-${hiddenId}`;
+  const searchId = `ps-${hiddenId}`;
+  const sorted = [...stocks].sort((a,b)=>{
+    const c = (a.categorie||'zzz').localeCompare(b.categorie||'zzz','fr');
+    return c !== 0 ? c : a.designation.localeCompare(b.designation,'fr');
+  });
+  const escAttr = v => String(v||'').replace(/"/g,'&quot;');
+  const rows = sorted.map(s => {
+    const search = `${s.designation} ${s.reference} ${s.categorie||''}`.toLowerCase();
+    return `<div data-search="${escAttr(search)}" data-id="${s.id}" onclick="pickPiece_${hiddenId}('${s.id}')"
+      style="padding:10px 12px;border-bottom:1px solid var(--border)22;cursor:pointer;display:flex;justify-content:space-between;gap:8px;align-items:center">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.designation)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(s.reference)}${s.categorie?` · ${esc(s.categorie)}`:''}</div>
+      </div>
+      <span class="mono" style="font-size:12px;color:${s.quantite<=s.seuilAlerte?C.warning:C.success};font-weight:700;flex-shrink:0">${s.quantite}</span>
+    </div>`;
+  }).join('');
+  // La fonction pickPiece_X écrit l'id sélectionné et rappelle onSelectFn
+  setTimeout(() => {
+    window[`pickPiece_${hiddenId}`] = (id) => {
+      document.getElementById(hiddenId).value = id;
+      // Marquer visuellement
+      document.querySelectorAll(`#${listId} > div`).forEach(r => {
+        r.style.background = r.getAttribute('data-id') === id ? 'rgba(232,151,10,.12)' : '';
+      });
+      if (onSelectFn) onSelectFn(id);
+    };
+  }, 0);
+  return `
+    <input type="hidden" id="${hiddenId}"/>
+    <input class="inp" id="${searchId}" placeholder="Rechercher une pièce…" style="margin-bottom:8px"
+      oninput="(()=>{const q=this.value.toLowerCase();document.querySelectorAll('#${listId} > div').forEach(r=>{r.style.display=r.getAttribute('data-search').includes(q)?'flex':'none';});})()"/>
+    <div id="${listId}" style="border:1px solid var(--border);border-radius:10px;max-height:260px;overflow-y:auto;background:var(--bg);margin-bottom:10px">${rows}</div>
   `;
 }
 
@@ -3015,9 +3053,7 @@ function openAddPrevPiece(prevId) {
     <div class="mh"></div>
     <div class="mhd"><span class="mt">Pièce prévue</span><button class="mc" onclick="restorePrevForm('${prevId}')">×</button></div>
     <div class="mb">
-      <div class="fi"><label class="fl">Pièce</label><select class="sel" id="addpp-piece">
-        ${stocks.map(s => `<option value="${s.id}">${esc(s.designation)}</option>`).join('')}
-      </select></div>
+      ${pieceSearchWidget('addpp-piece', stocks)}
       <div class="fi"><label class="fl">Quantité prévue</label><input class="inp" type="number" min="1" id="addpp-qte" value="1"/></div>
       <button class="bp" onclick="saveAddPrevPiece('${prevId}')">Ajouter</button>
     </div>
@@ -3026,6 +3062,7 @@ function openAddPrevPiece(prevId) {
 
 function saveAddPrevPiece(prevId) {
   const pieceId = document.getElementById('addpp-piece').value;
+  if (!pieceId) { alert('Sélectionnez une pièce.'); return; }
   const qte = Number(document.getElementById('addpp-qte').value) || 1;
   window._prevPieces = window._prevPieces || [];
   window._prevPieces.push({ pieceId, quantite: qte });
