@@ -1179,8 +1179,18 @@ const ext = (file.name.split('.').pop() || 'pdf').toLowerCase();
 const path = `${PLANNING_TYPES[type].key}.${ext}`;
 showToast('Envoi…', C.info);
 try {
-// Note : on ne supprime plus les anciennes versions car Supabase interdit maintenant
-// la suppression via triggers. Le upsert écrase le fichier au même chemin/extension.
+// Supprimer les anciennes versions via Edge Function (droits admin)
+try {
+const { data: sess } = await sb.auth.getSession();
+const token = sess?.session?.access_token;
+if (token) {
+await fetch(`${SUPABASE_URL}/functions/v1/delete-planning`, {
+method: 'POST',
+headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+body: JSON.stringify({ type }),
+});
+}
+} catch(e) { /* silencieux */ }
 const { error } = await sb.storage.from(BUCKET).upload(path, file, { upsert: true, contentType: file.type });
 if (error) { alert('Erreur : ' + error.message); return; }
 await setSetting(`planning-${type}`, JSON.stringify({ path, ext, dateMaj: new Date().toISOString() }));
