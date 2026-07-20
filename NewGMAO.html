@@ -1179,10 +1179,8 @@ const ext = (file.name.split('.').pop() || 'pdf').toLowerCase();
 const path = `${PLANNING_TYPES[type].key}.${ext}`;
 showToast('Envoi…', C.info);
 try {
-// Nettoyer les anciennes versions (autres extensions possibles)
-for (const e of ['pdf','png','jpg','jpeg','webp','heic']) {
-if (e !== ext) await sb.storage.from(BUCKET).remove([`${PLANNING_TYPES[type].key}.${e}`]).catch(()=>{});
-}
+// Note : on ne supprime plus les anciennes versions car Supabase interdit maintenant
+// la suppression via triggers. Le upsert écrase le fichier au même chemin/extension.
 const { error } = await sb.storage.from(BUCKET).upload(path, file, { upsert: true, contentType: file.type });
 if (error) { alert('Erreur : ' + error.message); return; }
 await setSetting(`planning-${type}`, JSON.stringify({ path, ext, dateMaj: new Date().toISOString() }));
