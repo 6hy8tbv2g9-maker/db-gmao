@@ -932,6 +932,9 @@ typeFichier: 'type_fichier',
 storagePath: 'storage_path',
 dateAjout: 'date_ajout',
 piecesPrevues: 'pieces_prevues',
+userId: 'user_id',
+resetFait: 'reset_fait',
+createdAt: 'created_at',
 };
 const snakeToCamel = Object.fromEntries(Object.entries(camelToSnake).map(([k,v])=>[v,k]));
 
@@ -955,7 +958,7 @@ out[snakeToCamel[k] || k] = v;
 return out;
 };
 
-const TABLES = { eq: 'equipements', ots: 'ots', prev: 'preventif', stock: 'stock', otPieces: 'ot_pieces', settings: 'settings', docs: 'documents', indisp: 'indisponibilites' };
+const TABLES = { eq: 'equipements', ots: 'ots', prev: 'preventif', stock: 'stock', otPieces: 'ot_pieces', settings: 'settings', docs: 'documents', indisp: 'indisponibilites', releves: 'releves' };
 
 // Chargement initial depuis Supabase
 async function loadFromCloud() {
@@ -967,11 +970,11 @@ if (error) { console.warn(`Load ${table}:`, error.message); return []; }
 return (data || []).map(fromDB);
 } catch(e) { console.warn(`Load ${table} exception:`, e); return []; }
 };
-const [eq, ots, prev, stock, otPieces, settings, docs, indisp] = await Promise.all([
+const [eq, ots, prev, stock, otPieces, settings, docs, indisp, releves] = await Promise.all([
 load('equipements'), load('ots'), load('preventif'), load('stock'),
-load('ot_pieces'), load('settings'), load('documents'), load('indisponibilites'),
+load('ot_pieces'), load('settings'), load('documents'), load('indisponibilites'), load('releves'),
 ]);
-return { eq, ots, prev, stock, otPieces, settings, docs, indisp };
+return { eq, ots, prev, stock, otPieces, settings, docs, indisp, releves };
 }
 
 // Upsert (création ou mise à jour) d'une ligne
@@ -1008,6 +1011,7 @@ if (JSON.stringify(data.prev) !== JSON.stringify(S.prev)) { S.prev = data.prev; 
 if (JSON.stringify(data.stock) !== JSON.stringify(S.stock)) { S.stock = data.stock; changed = true; }
 if (JSON.stringify(data.otPieces) !== JSON.stringify(S.otPieces)) { S.otPieces = data.otPieces; changed = true; }
 if (JSON.stringify(data.docs) !== JSON.stringify(S.docs)) { S.docs = data.docs; changed = true; }
+if (JSON.stringify(data.releves) !== JSON.stringify(S.releves)) { S.releves = data.releves; changed = true; }
 if (JSON.stringify(data.indisp) !== JSON.stringify(S.indisp)) { S.indisp = data.indisp; changed = true; }
 if (changed) { saveAll(); render(); }
 } catch(e) { console.warn('Polling error:', e); }
@@ -1049,7 +1053,7 @@ const DEMO_STOCK=[
 // ═══════════════════════════════════
 const S = {
 page:'dashboard',
-eq: [], ots: [], prev: [], stock: [], otPieces: [], settings: [], docs: [], indisp: [],
+eq: [], ots: [], prev: [], stock: [], otPieces: [], settings: [], docs: [], indisp: [], releves: [],
 operateurs: [],
 indispoPerso: [],
 search:{eq:'',ots:'',prev:'',stock:''},
@@ -1119,6 +1123,7 @@ const TABS=[
 {id:'preventif',ic:'📅',lb:'Prév.'},
 {id:'calendar',ic:'🗓',lb:'Cal.'},
 {id:'stock',ic:'📦',lb:'Stock'},
+{id:'releves',ic:'📝',lb:'Relevés'},
 {id:'stats',ic:'📊',lb:'Stats'},
 {id:'settings',ic:'⚙️',lb:'Régl.'},
 ];
@@ -1129,7 +1134,9 @@ const sA = S.stock.filter(s=>s.quantite<=s.seuilAlerte).length;
 const pA = S.prev.filter(p=>{const d=daysUntil(p.prochaineEcheance);return d!==null&&d<=7;}).length;
 const al = {dashboard:oA+sA+pA,ots:oA,stock:sA,preventif:pA};
 
-document.getElementById('nav').innerHTML = TABS.map(t => {
+const tabsVisibles = currentRole==='operateur' ? TABS.filter(t=>['releves','settings'].includes(t.id)) : TABS;
+if (currentRole==='operateur' && !['releves','settings'].includes(S.page)) S.page='releves';
+document.getElementById('nav').innerHTML = tabsVisibles.map(t => {
 const a = al[t.id]||0;
 return `<button class="ni ${S.page===t.id?'on':''}" onclick="go('${t.id}')">
 <span class="ni-ic">${t.ic}</span>
@@ -1151,7 +1158,7 @@ const wasFocused = document.activeElement?.classList.contains('si');
 const focusedId = document.activeElement?.id;
 const focusedVal = document.activeElement?.value;
 
-const fn = {dashboard:pgDashboard,equipements:pgEquipements,ots:pgOTs,preventif:pgPreventif,calendar:pgCalendar,stock:pgStock,stats:pgStats,settings:pgSettings};
+const fn = {dashboard:pgDashboard,equipements:pgEquipements,ots:pgOTs,preventif:pgPreventif,calendar:pgCalendar,stock:pgStock,releves:pgReleves,stats:pgStats,settings:pgSettings};
 document.getElementById('content').innerHTML = (fn[S.page]||pgDashboard)();
 
 // Restore search focus after re-render
@@ -2153,7 +2160,8 @@ ${memoTable([
 ['Créer un compte','Authentication → Users → Add user (Auto Confirm coché).'],
 ['Changer un rôle',"SQL Editor : UPDATE profils SET role = '...' WHERE email ILIKE '...';"],
 ['Réinitialiser un mot de passe','Authentication → cliquer sur l\'utilisateur.'],
-['Rôles disponibles','lecteur, technicien, manager.'],
+['Rôles disponibles','operateur, lecteur, technicien, manager.'],
+['Compte opérateur production',"Créer le compte, puis : UPDATE profils SET role = 'operateur' WHERE email ILIKE '...'; → il ne voit que l'onglet Relevés."],
 ])}
 ${title('Fonctions exclusives (dans l\'app)')}
 ${memoTable([
@@ -2188,6 +2196,18 @@ ${memoTable([
 ])}
 <div style="background:rgba(232,151,10,.08);border-left:3px solid ${C.accent};border-radius:8px;padding:10px;font-size:12px;color:var(--muted)">
 <b style="color:var(--text)">Un doute, un blocage ?</b> Contactez Corentin et/ou Pierre. Eux seuls peuvent supprimer des données, modifier le tarif horaire et créer de nouveaux comptes.
+</div>`;
+} else if (currentRole === 'operateur') {
+content = `
+${title('Fin de poste — Laveuse-remplisseuse')}
+${memoTable([
+['1. Compteurs','Écran COMBI : Filled kegs / failed kegs L1 et L2. Écran 9.9 : Beer totalizer L1 et L2.'],
+['2. Head statistics','Écran 10.2 : pour chaque tête, recopier les compteurs non nuls (étapes 1 à 20).'],
+['3. Enregistrer','Onglet 📝 Relevés → Saisir le relevé de fin de poste → Enregistrer.'],
+['4. Reset','Après l\'enregistrement, Reset H1–H10 sur l\'écran Head statistics, puis cocher la case.'],
+])}
+<div style="background:rgba(232,151,10,.08);border-left:3px solid ${C.accent};border-radius:8px;padding:10px;font-size:12px;color:var(--muted)">
+<b style="color:var(--text)">Un défaut qui revient souvent sur la même tête ?</b> Notez-le dans Observations et prévenez la maintenance.
 </div>`;
 } else {
 content = `
@@ -3218,6 +3238,196 @@ function delPrev(id) {
 if (!confirm('Supprimer ?')) return;
 S.prev=S.prev.filter(p=>p.id!==id);
 syncDelete('prev', id); closeModal(); render();
+}
+
+// ═══════════════════════════════════
+// ═══════════════════════════════════
+// RELEVÉS FIN DE POSTE — Laveuse-remplisseuse COMBI (Cheops)
+// ═══════════════════════════════════
+const RLV_POSTES = ['Matin','Après-midi','Nuit'];
+const RLV_ETAPES = 20;
+const RLV_TETES = [
+{n:1,g:'Prélaveuse'},{n:2,g:'Prélaveuse'},
+{n:3,g:'Ligne 1'},{n:4,g:'Ligne 1'},{n:5,g:'Ligne 1'},{n:6,g:'Ligne 1'},
+{n:7,g:'Ligne 2'},{n:8,g:'Ligne 2'},{n:9,g:'Ligne 2'},{n:10,g:'Ligne 2'},
+];
+const RLV_COMPTEURS = [
+{k:'rempliL1',lb:'Fûts remplis L1',u:'fûts'},{k:'defautL1',lb:'Fûts en défaut L1',u:'fûts'},
+{k:'rempliL2',lb:'Fûts remplis L2',u:'fûts'},{k:'defautL2',lb:'Fûts en défaut L2',u:'fûts'},
+{k:'biereL1',lb:'Totalisateur bière L1',u:'L'},{k:'biereL2',lb:'Totalisateur bière L2',u:'L'},
+];
+const canReleve = () => ['operateur','technicien','manager'].includes(currentRole);
+const rlvEq = () => S.eq.find(e => /laveuse|remplisseuse|combi/i.test(e.nom||''));
+const rlvTotalDef = r => Object.values(r.defauts||{}).reduce((a,t)=>a+Object.values(t).reduce((b,v)=>b+(Number(v)||0),0),0);
+const rlvTeteDef = (r,n) => Object.values((r.defauts||{})[n]||{}).reduce((b,v)=>b+(Number(v)||0),0);
+const rlvMoi = () => {
+const p = S.operateurs.find(o => o.id === currentUser?.id);
+return (p && operateurLabel(p)) || currentUser?.email || '';
+};
+const rlvPosteCourant = () => { const h = new Date().getHours(); return h>=5&&h<13?'Matin':h>=13&&h<21?'Après-midi':'Nuit'; };
+const rlvDateFr = d => d ? new Date(d+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'short',day:'2-digit',month:'2-digit'}) : '—';
+
+function pgReleves() {
+const list = [...(S.releves||[])].sort((a,b)=>(b.date||'').localeCompare(a.date||'') || RLV_POSTES.indexOf(b.poste)-RLV_POSTES.indexOf(a.poste) || (b.createdAt||'').localeCompare(a.createdAt||''));
+const d30 = new Date(Date.now()-30*864e5).toISOString().split('T')[0];
+const recents = list.filter(r => (r.date||'') >= d30);
+const auj = list.filter(r => r.date === today());
+const dejaFait = auj.some(r => r.poste === rlvPosteCourant());
+
+// Cumul défauts par tête sur 30 j + étape la plus fréquente
+const parTete = RLV_TETES.map(t => {
+const etapes = {};
+recents.forEach(r => Object.entries((r.defauts||{})[t.n]||{}).forEach(([e,v]) => { etapes[e]=(etapes[e]||0)+(Number(v)||0); }));
+const total = Object.values(etapes).reduce((a,v)=>a+v,0);
+const top = Object.entries(etapes).sort((a,b)=>b[1]-a[1]).filter(x=>x[1]>0).slice(0,3);
+return {...t, total, top};
+});
+const maxT = Math.max(1, ...parTete.map(t=>t.total));
+
+const row = r => {
+const nd = rlvTotalDef(r);
+const c = r.compteurs||{};
+return `<div class="ci" onclick="modalReleveView('${r.id}')">
+<div style="flex:1;min-width:0">
+<div style="display:flex;align-items:center;gap:7px;margin-bottom:3px;flex-wrap:wrap">
+<span style="font-weight:700">${rlvDateFr(r.date)}</span>${badge(r.poste||'—',C.info)}
+${nd?badge(nd+' déf. têtes',C.warning):badge('0 déf. têtes',C.success)}
+</div>
+<div style="font-size:11px;color:var(--muted)">${esc(r.operateur||'—')} · L1 ${c.rempliL1??'—'} fûts (${c.defautL1??'—'} déf.) · L2 ${c.rempliL2??'—'} fûts (${c.defautL2??'—'} déf.)</div>
+</div>
+<span style="color:var(--muted)">›</span>
+</div>`;
+};
+
+return `
+<div class="ph">
+<div><div class="pt">Relevés COMBI</div><div class="ps">Laveuse-remplisseuse · compteurs + Head statistics en fin de poste</div></div>
+</div>
+${canReleve()?`
+<div class="card" style="padding:14px;border-left:3px solid ${dejaFait?C.success:C.accent}">
+<div style="font-size:13px;margin-bottom:10px">${dejaFait?`✅ Relevé du poste <b>${rlvPosteCourant()}</b> déjà saisi aujourd'hui.`:`Poste en cours : <b>${rlvPosteCourant()}</b> — relevé à faire en fin de poste.`}</div>
+<button class="bp" style="margin-top:0" onclick="modalReleve()">📝 Saisir le relevé de fin de poste</button>
+</div>`:''}
+<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:14px 14px 6px">Défauts par tête · 30 derniers jours</div>
+<div class="card" style="padding:10px 14px">
+${parTete.map(t=>`
+<div style="display:flex;align-items:center;gap:10px;padding:5px 0">
+<div style="width:92px;flex-shrink:0;font-size:12px"><b>H${t.n}</b> <span style="color:var(--muted);font-size:10px">${t.g}</span></div>
+<div style="flex:1;height:8px;background:var(--surface2);border-radius:4px;overflow:hidden"><div style="height:100%;width:${t.total/maxT*100}%;background:${t.total?C.warning:'transparent'}"></div></div>
+<div class="mono" style="width:34px;text-align:right;font-weight:700;color:${t.total?C.warning:'var(--muted)'}">${t.total}</div>
+</div>
+${t.top.length?`<div style="font-size:10px;color:var(--muted);margin:-2px 0 4px 102px">${t.top.map(([e,v])=>`étape ${e} : ${v}`).join(' · ')}</div>`:''}`).join('')}
+</div>
+<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:14px 14px 6px;display:flex;justify-content:space-between"><span>Historique</span><span>${list.length}</span></div>
+${list.length?`<div class="card">${list.slice(0,60).map(row).join('')}</div>`:`<div class="empty"><div class="empty-i">📝</div><div>Aucun relevé pour l'instant</div></div>`}
+<div class="sp"></div>`;
+}
+
+function modalReleve() {
+if (!canReleve()) return;
+const poste = rlvPosteCourant();
+const inpN = (id, ph='0') => `<input class="inp" type="number" min="0" step="any" inputmode="decimal" id="${id}" placeholder="${ph}"/>`;
+const teteBloc = t => `
+<details class="rlv-tete" style="border:1px solid var(--border);border-radius:10px;margin-bottom:6px;background:var(--surface2)">
+<summary style="padding:10px 12px;cursor:pointer;font-size:13px;font-weight:700;display:flex;justify-content:space-between;align-items:center;list-style:none">
+<span>Tête ${t.n} <span style="color:var(--muted);font-weight:600;font-size:11px">· ${t.g}</span></span>
+<span id="rlv-tot-${t.n}" class="mono" style="color:var(--muted)">0</span>
+</summary>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;padding:4px 12px 12px">
+${Array.from({length:10},(_,i)=>[i+1,i+11]).map(([a,b])=>[a,b].map(e=>`
+<label style="display:flex;align-items:center;gap:6px;font-size:12px"><span class="mono" style="width:24px;color:var(--muted)">${e}.</span>
+<input class="inp rlv-d" data-t="${t.n}" data-e="${e}" type="number" min="0" inputmode="numeric" placeholder="0" style="padding:6px 8px" oninput="rlvMajTot(${t.n})"/></label>`).join('')).join('')}
+</div>
+</details>`;
+
+openModal(`
+<div class="mh"></div>
+<div class="mhd"><span class="mt">📝 Relevé fin de poste · COMBI</span><button class="mc" onclick="closeModal()">×</button></div>
+<div class="mb">
+<div class="g2">
+<div class="fi"><label class="fl">Date</label><input class="inp" type="date" id="rlv-date" value="${today()}"/></div>
+<div class="fi"><label class="fl">Poste</label><select class="inp" id="rlv-poste">${RLV_POSTES.map(p=>`<option ${p===poste?'selected':''}>${p}</option>`).join('')}</select></div>
+</div>
+<div class="fi"><label class="fl">Opérateur</label><input class="inp" id="rlv-op" value="${esc(rlvMoi())}"/></div>
+<div style="font-size:12px;font-weight:800;color:${C.accent};text-transform:uppercase;letter-spacing:.05em;margin:14px 0 4px">1 · Compteurs (écran COMBI + Paramètres techno.)</div>
+<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Recopier les valeurs affichées : Filled / failed kegs L1 & L2, Beer totalizer L1 & L2.</div>
+<div class="g2">
+${RLV_COMPTEURS.map(c=>`<div class="fi"><label class="fl">${c.lb} (${c.u})</label>${inpN('rlv-c-'+c.k)}</div>`).join('')}
+</div>
+<div style="font-size:12px;font-weight:800;color:${C.accent};text-transform:uppercase;letter-spacing:.05em;margin:14px 0 4px">2 · Head statistics (écran 10.2)</div>
+<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Ouvrir uniquement les têtes qui ont des défauts et saisir le compteur de chaque étape (1 à 20). Cases vides = 0.</div>
+${RLV_TETES.map(teteBloc).join('')}
+<label style="display:flex;gap:10px;align-items:flex-start;font-size:13px;margin:12px 0;cursor:pointer">
+<input type="checkbox" id="rlv-reset" style="width:20px;height:20px;flex-shrink:0;margin-top:1px"/>
+<span>J'ai remis les statistiques des têtes à zéro (Reset H1–H10) après le relevé</span>
+</label>
+<div class="fi"><label class="fl">Observations / problèmes rencontrés</label><textarea class="ta" id="rlv-obs" placeholder="Arrêts, fuites, alarmes…"></textarea></div>
+<button class="bp" onclick="saveReleve()">Enregistrer le relevé</button>
+</div>`);
+}
+
+function rlvMajTot(n) {
+const tot = [...document.querySelectorAll(`.rlv-d[data-t="${n}"]`)].reduce((a,i)=>a+(Number(i.value)||0),0);
+const el = document.getElementById('rlv-tot-'+n);
+if (el) { el.textContent = tot; el.style.color = tot ? C.warning : 'var(--muted)'; }
+}
+
+async function saveReleve() {
+const date = document.getElementById('rlv-date').value;
+const poste = document.getElementById('rlv-poste').value;
+const operateur = document.getElementById('rlv-op').value.trim();
+if (!date) { alert('Date obligatoire'); return; }
+if (!operateur) { alert('Nom de l\'opérateur obligatoire'); return; }
+const compteurs = {};
+let manquants = [];
+RLV_COMPTEURS.forEach(c => {
+const v = document.getElementById('rlv-c-'+c.k).value;
+if (v === '') manquants.push(c.lb); else compteurs[c.k] = Number(v);
+});
+if (manquants.length && !confirm(`Compteurs non renseignés :\n- ${manquants.join('\n- ')}\n\nEnregistrer quand même ?`)) return;
+const defauts = {};
+document.querySelectorAll('.rlv-d').forEach(i => {
+const v = Number(i.value)||0;
+if (v > 0) { (defauts[i.dataset.t] = defauts[i.dataset.t] || {})[i.dataset.e] = v; }
+});
+if (S.releves.some(r => r.date===date && r.poste===poste) && !confirm(`Un relevé existe déjà pour ${poste} le ${rlvDateFr(date)}. En ajouter un autre ?`)) return;
+const eq = rlvEq();
+const row = {
+id: uid(), date, poste, operateur, userId: currentUser?.id || null,
+machine: 'Laveuse-remplisseuse', equipementId: eq?.id || null,
+compteurs, defauts, resetFait: document.getElementById('rlv-reset').checked,
+observations: document.getElementById('rlv-obs').value, createdAt: new Date().toISOString(),
+};
+S.releves = [...S.releves, row];
+await syncSave('releves', row);
+closeModal(); render();
+showToast('Relevé enregistré', C.success);
+}
+
+function modalReleveView(id) {
+const r = S.releves.find(x => x.id === id); if (!r) return;
+const c = r.compteurs||{};
+const tetes = RLV_TETES.filter(t => rlvTeteDef(r,t.n) > 0);
+openModal(`
+<div class="mh"></div>
+<div class="mhd"><span class="mt">Relevé ${rlvDateFr(r.date)} · ${esc(r.poste||'')}</span><button class="mc" onclick="closeModal()">×</button></div>
+<div class="mb">
+<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Saisi par <b style="color:var(--text)">${esc(r.operateur||'—')}</b>${r.createdAt?` le ${new Date(r.createdAt).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}`:''}</div>
+<div class="card" style="margin-bottom:12px">
+${RLV_COMPTEURS.map(k=>`<div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border)22;font-size:13px"><span>${k.lb}</span><span class="mono" style="font-weight:700">${c[k.k]??'—'} <span style="color:var(--muted);font-weight:400">${k.u}</span></span></div>`).join('')}
+</div>
+<div style="font-size:12px;font-weight:800;color:${C.accent};text-transform:uppercase;letter-spacing:.05em;margin:4px 0 8px">Head statistics · ${rlvTotalDef(r)} défaut(s)</div>
+${tetes.length?tetes.map(t=>`<div style="padding:8px 12px;background:var(--surface2);border-radius:8px;margin-bottom:6px;font-size:13px"><b>Tête ${t.n}</b> <span style="color:var(--muted);font-size:11px">${t.g}</span><div style="font-size:12px;color:var(--muted);margin-top:3px">${Object.entries(r.defauts[t.n]).sort((a,b)=>a[0]-b[0]).map(([e,v])=>`étape ${e} : <b style="color:${C.warning}">${v}</b>`).join(' · ')}</div></div>`).join(''):`<div style="font-size:13px;color:${C.success};margin-bottom:8px">Aucun défaut de tête</div>`}
+<div style="font-size:12px;margin:10px 0">${r.resetFait?'✅ Statistiques remises à zéro après relevé':'⚠ Statistiques non remises à zéro'}</div>
+${r.observations?`<div class="fi"><label class="fl">Observations</label><div style="font-size:13px;white-space:pre-wrap">${esc(r.observations)}</div></div>`:''}
+${canDelete()?`<button class="bd" onclick="delReleve('${r.id}')">Supprimer ce relevé</button>`:''}
+</div>`);
+}
+
+function delReleve(id) {
+if (!confirm('Supprimer ce relevé ?')) return;
+S.releves = S.releves.filter(r => r.id !== id);
+syncDelete('releves', id); closeModal(); render();
 }
 
 // ═══════════════════════════════════
@@ -4534,7 +4744,7 @@ try {
 if (cloudEnabled && navigator.onLine) {
 const data = await loadFromCloud();
 S.eq = data.eq; S.ots = data.ots; S.prev = data.prev; S.stock = data.stock;
-S.otPieces = data.otPieces || []; S.settings = data.settings || []; S.docs = data.docs || []; S.indisp = data.indisp || [];
+S.otPieces = data.otPieces || []; S.settings = data.settings || []; S.docs = data.docs || []; S.indisp = data.indisp || []; S.releves = data.releves || [];
 await loadOperateurs();
 await loadIndispoPerso();
 saveAll();
