@@ -251,6 +251,10 @@ return `OT-${String((n.length?Math.max(...n):0)+1).padStart(3,'0')}`;
 
 const FREQ_DAYS = {hebdomadaire:7,mensuel:30,trimestriel:90,semestriel:182,annuel:365};
 const SITES = ['Brasserie','Conditionnement','Prépa','Salem'];
+// Stock : deux magasins distincts (colonne stock.site ; null/'' = Débauche)
+const STOCK_SITES = ['Débauche','Salem'];
+const stockSite = s => (s && s.site === 'Salem') ? 'Salem' : 'Débauche';
+const eqStockSite = eqId => { const e = S.eq.find(x=>x.id===eqId); return e?.site === 'Salem' ? 'Salem' : 'Débauche'; };
 
 // ═══════════════════════════════════
 // QR
@@ -1051,6 +1055,7 @@ indispoPerso: [],
 search:{eq:'',ots:'',prev:'',stock:''},
 otFilter:'all',
 prevSite:'all',
+stockSite:'Débauche',
 statsPeriod: '30', // jours
 weekOffset: 0, // décalage semaine (0 = semaine courante)
 loading: true,
@@ -1436,7 +1441,7 @@ ${sAlt.length?`
 ${sAlt.map(s=>`<div class="ci" onclick="modalSt('${s.id}')" style="cursor:pointer">
 <div style="flex:1">
 <div style="font-size:13px;font-weight:600">${esc(s.designation)}</div>
-<div style="font-size:11px;color:var(--muted)">${esc(s.reference)} · ${esc(s.localisation)}</div>
+<div style="font-size:11px;color:var(--muted)">${stockSite(s)==='Salem'?`<span style="color:${C.info};font-weight:700">SALEM</span> · `:''}${esc(s.reference)} · ${esc(s.localisation)}</div>
 </div>
 <div style="color:${C.warning};font-family:monospace;font-size:18px;font-weight:700">${s.quantite}<span style="color:var(--muted);font-size:11px">/${s.seuilAlerte}</span></div>
 </div>`).join('')}
@@ -2484,7 +2489,7 @@ openModal(`
 <div class="mh"></div>
 <div class="mhd"><span class="mt">Ajouter une pièce</span><button class="mc" onclick="restoreOTForm()">×</button></div>
 <div class="mb">
-${pieceSearchWidget('addp-piece', stocks)}
+${pieceSearchWidget('addp-piece', stocks, null, eqStockSite(otFormState.equipementId))}
 <div class="fi"><label class="fl">Quantité</label><input class="inp" type="number" min="1" id="addp-qte" value="1"/></div>
 <button class="bp" onclick="saveTmpPiece()">Ajouter</button>
 </div>
@@ -2546,7 +2551,7 @@ if (s) {
 document.getElementById('ap-pu').value = Number(s.prixUnitaire||0).toFixed(2);
 document.getElementById('ap-warn').innerHTML = `Stock dispo : <strong style="color:${C.success}">${s.quantite}</strong>`;
 }
-})}
+}, eqStockSite(S.ots.find(o=>o.id===otId)?.equipementId))}
 <div class="g2">
 <div class="fi"><label class="fl">Quantité</label><input class="inp" type="number" min="0.01" step="0.01" id="ap-qte" value="1"/></div>
 <div class="fi"><label class="fl">Prix unit. (€)</label><input class="inp" type="number" min="0" step="0.01" id="ap-pu" value="0"/></div>
@@ -2752,21 +2757,22 @@ ${canWrite() ? `
 }
 
 // ─── Widget de sélection de pièce avec recherche ───
-function pieceSearchWidget(hiddenId, stocks, onSelectFn) {
+function pieceSearchWidget(hiddenId, stocks, onSelectFn, prefSite) {
 const listId = `pl-${hiddenId}`;
 const searchId = `ps-${hiddenId}`;
 const sorted = [...stocks].sort((a,b)=>{
+if (prefSite) { const sa = stockSite(a)===prefSite?0:1, sb2 = stockSite(b)===prefSite?0:1; if (sa!==sb2) return sa-sb2; }
 const c = (a.categorie||'zzz').localeCompare(b.categorie||'zzz','fr');
 return c !== 0 ? c : a.designation.localeCompare(b.designation,'fr');
 });
 const escAttr = v => String(v||'').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 const rows = sorted.map(s => {
-const search = `${s.designation} ${s.reference} ${s.categorie||''}`.toLowerCase();
+const search = `${s.designation} ${s.reference} ${s.categorie||''} ${stockSite(s)}`.toLowerCase();
 return `<div data-search="${escAttr(search)}" data-id="${escAttr(s.id)}"
 style="padding:10px 12px;border-bottom:1px solid var(--border)22;cursor:pointer;display:flex;justify-content:space-between;gap:8px;align-items:center">
 <div style="flex:1;min-width:0;pointer-events:none">
 <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.designation)}</div>
-<div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(s.reference)}${s.categorie?` · ${esc(s.categorie)}`:''}</div>
+<div style="font-size:11px;color:var(--muted);margin-top:2px">${stockSite(s)==='Salem'?`<span style="color:${C.info};font-weight:700">SALEM</span> · `:''}${esc(s.reference)}${s.categorie?` · ${esc(s.categorie)}`:''}</div>
 </div>
 <span class="mono" style="font-size:12px;color:${s.quantite<=s.seuilAlerte?C.warning:C.success};font-weight:700;flex-shrink:0;pointer-events:none">${s.quantite}</span>
 </div>`;
@@ -3080,7 +3086,7 @@ openModal(`
 <div class="mh"></div>
 <div class="mhd"><span class="mt">Pièce prévue</span><button class="mc" onclick="restorePrevForm('${prevId}')">×</button></div>
 <div class="mb">
-${pieceSearchWidget('addpp-piece', stocks)}
+${pieceSearchWidget('addpp-piece', stocks, null, eqStockSite(window._prevFormState.equipementId || (window._prevFormState.machinesChecked||[])[0]))}
 <div class="fi"><label class="fl">Quantité prévue</label><input class="inp" type="number" min="1" id="addpp-qte" value="1"/></div>
 <button class="bp" onclick="saveAddPrevPiece('${prevId}')">Ajouter</button>
 </div>
@@ -3219,8 +3225,20 @@ syncDelete('prev', id); closeModal(); render();
 // ═══════════════════════════════════
 function pgStock() {
 const q=S.search.stock.toLowerCase();
-const list=S.stock.filter(s=>s.designation.toLowerCase().includes(q)||s.reference.toLowerCase().includes(q)||(s.categorie||'').toLowerCase().includes(q));
-const val=S.stock.reduce((a,x)=>a+x.quantite*x.prixUnitaire,0);
+const site=S.stockSite;
+const siteStock=S.stock.filter(s=>stockSite(s)===site);
+const list=siteStock.filter(s=>s.designation.toLowerCase().includes(q)||(s.reference||'').toLowerCase().includes(q)||(s.categorie||'').toLowerCase().includes(q));
+const val=siteStock.reduce((a,x)=>a+x.quantite*(x.prixUnitaire||0),0);
+const siteTabs = STOCK_SITES.map(st=>{
+const on = site===st;
+const items = S.stock.filter(s=>stockSite(s)===st);
+const nAl = items.filter(s=>s.quantite<=s.seuilAlerte).length;
+return `<button onclick="S.stockSite='${st}';render()" style="
+flex:1;padding:9px 14px;border-radius:20px;font-size:13px;font-weight:700;cursor:pointer;
+font-family:-apple-system,sans-serif;white-space:nowrap;border:1px solid ${on?C.accent:'var(--border)'};
+background:${on?'rgba(232,151,10,.15)':'var(--surface2)'};color:${on?C.accent:'var(--muted)'}">
+${st==='Salem'?'SALEM':st} <span style="opacity:.7">${items.length}</span>${nAl?` <span style="color:${C.warning}">⚠${nAl}</span>`:''}</button>`;
+}).join('');
 
 const rowStock = s => {
 const al=s.quantite<=s.seuilAlerte;
@@ -3254,12 +3272,13 @@ const categories = Object.keys(parCategorie).sort((a,b)=>a==='Autres'?1:b==='Aut
 return `
 <div class="ph">
 <div>
-<div class="pt">Stock PDR</div>
+<div class="pt">Stock PDR · ${site==='Salem'?'SALEM':site}</div>
 <div class="ps">${list.length} réf. · <span style="color:var(--accent);font-family:monospace">${val.toFixed(2)} €</span>${alertes.length?` · <span style="color:${C.warning}">⚠ ${alertes.length} en alerte</span>`:''}</div>
 </div>
 </div>
+<div style="display:flex;gap:8px;padding:4px 2px 10px">${siteTabs}</div>
 <div class="sc"><input id="st-search" class="si" placeholder="Rechercher…" value="${esc(S.search.stock)}" oninput="S.search.stock=this.value;render()"/></div>
-${list.length===0?`<div class="empty"><div class="empty-i">📦</div><div>Aucune pièce en stock</div></div>`:`
+${list.length===0?`<div class="empty"><div class="empty-i">📦</div><div>Aucune pièce en stock ${site==='Salem'?'SALEM':site}</div></div>`:`
 ${alertes.length?`
 <div style="font-size:11px;color:${C.warning};text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:14px 14px 6px;display:flex;justify-content:space-between;align-items:baseline">
 <span>⚠ EN ALERTE</span>
@@ -3289,7 +3308,7 @@ syncSave('stock', updated); render();
 function modalSt(id) {
 const s=id?S.stock.find(x=>x.id===id):null;
 const isN=!s;
-const f=s?{...s}:{reference:'',designation:'',categorie:'',quantite:0,seuilAlerte:1,localisation:'',fournisseur:'',prixUnitaire:0,observations:''};
+const f=s?{...s,site:stockSite(s)}:{site:S.stockSite,reference:'',designation:'',categorie:'',quantite:0,seuilAlerte:1,localisation:'',fournisseur:'',prixUnitaire:0,observations:''};
 
 openModal(`
 <div class="mh"></div>
@@ -3302,6 +3321,7 @@ openModal(`
 <div class="fi"><label class="fl">Référence</label><input class="inp" id="sr" value="${esc(f.reference)}" placeholder="JT-32X3"/></div>
 <div class="fi"><label class="fl">Catégorie</label><input class="inp" id="sc" value="${esc(f.categorie)}" placeholder="Joints…"/></div>
 </div>
+<div class="fi"><label class="fl">Site (magasin)</label><select class="inp" id="ssite">${STOCK_SITES.map(st=>`<option value="${st}" ${f.site===st?'selected':''}>${st==='Salem'?'SALEM':st}</option>`).join('')}</select></div>
 <div class="fi"><label class="fl">Désignation *</label><input class="inp" id="sd" value="${esc(f.designation)}" placeholder="Nom complet de la pièce"/></div>
 <div class="g2">
 <div class="fi"><label class="fl">Fournisseur</label><input class="inp" id="sf" value="${esc(f.fournisseur)}" placeholder="Nom"/></div>
@@ -3321,7 +3341,7 @@ ${canWrite()?`<button class="bp" onclick="saveSt('${isN?'':s.id}')">${isN?'Ajout
 function saveSt(id) {
 const designation=document.getElementById('sd').value.trim();
 if (!designation) { alert('Désignation obligatoire'); return; }
-const d={designation,reference:document.getElementById('sr').value,categorie:document.getElementById('sc').value,fournisseur:document.getElementById('sf').value,localisation:document.getElementById('sl').value,quantite:Number(document.getElementById('sq').value)||0,seuilAlerte:Number(document.getElementById('ss').value)||0,prixUnitaire:Number(document.getElementById('sp').value)||0,observations:document.getElementById('so').value};
+const d={designation,reference:document.getElementById('sr').value,categorie:document.getElementById('sc').value,fournisseur:document.getElementById('sf').value,localisation:document.getElementById('sl').value,quantite:Number(document.getElementById('sq').value)||0,seuilAlerte:Number(document.getElementById('ss').value)||0,prixUnitaire:Number(document.getElementById('sp').value)||0,observations:document.getElementById('so').value,site:document.getElementById('ssite').value==='Salem'?'Salem':'Débauche'};
 const row = id ? {...S.stock.find(s=>s.id===id), ...d} : {id:uid(), ...d};
 if (id) S.stock=S.stock.map(s=>s.id===id?row:s);
 else S.stock=[...S.stock, row];
@@ -3596,6 +3616,7 @@ return opts.join('');
 <button class="bp" onclick="generateDailyReport()" style="margin-top:0;margin-bottom:14px">📥 Télécharger rapport du jour</button>
 
 <div style="font-size:13px;color:var(--text);margin-bottom:10px;font-weight:600;margin-top:10px">État du stock</div>
+<div style="display:flex;gap:8px;margin-bottom:8px">${STOCK_SITES.map(st=>{const on=S.stockSite===st;return `<button onclick="S.stockSite='${st}';render()" style="flex:1;padding:7px 12px;border-radius:20px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${on?C.accent:'var(--border)'};background:${on?'rgba(232,151,10,.15)':'var(--surface2)'};color:${on?C.accent:'var(--muted)'}">${st==='Salem'?'SALEM':st}</button>`;}).join('')}</div>
 <button class="bp" onclick="generateStockReport(false)" style="margin-top:0;margin-bottom:8px">📦 PDF stock complet</button>
 <button class="bp" onclick="generateStockReport(true)" style="margin-top:0;background:rgba(217,151,10,.15);border:1px solid rgba(217,151,10,.4);color:${C.warning}">⚠ PDF alertes stock</button>
 </div>
@@ -4086,11 +4107,12 @@ const cDanger = [220, 53, 69];
 const cWarning = [217, 151, 10];
 
 // Filtrer + trier par désignation A→Z
-let list = [...S.stock];
+const siteLbl = S.stockSite==='Salem' ? 'SALEM' : 'DÉBAUCHE';
+let list = S.stock.filter(s => stockSite(s) === S.stockSite);
 if (alertesOnly) list = list.filter(s => s.quantite <= s.seuilAlerte);
 list.sort((a,b) => (a.designation||'').localeCompare(b.designation||'', 'fr'));
 
-const titre = alertesOnly ? 'STOCK — ALERTES' : 'ÉTAT DU STOCK';
+const titre = alertesOnly ? `STOCK ${siteLbl} — ALERTES` : `ÉTAT DU STOCK ${siteLbl}`;
 const valeurTotale = list.reduce((s,x) => s + (Number(x.quantite)||0) * (Number(x.prixUnitaire)||0), 0);
 
 // Header
@@ -4161,7 +4183,7 @@ doc.text(`GMAO · ${titre}`, 14, 290);
 doc.text(`Page ${i}/${pageCount}`, 180, 290);
 }
 
-const filename = alertesOnly ? `Stock_Alertes_${today()}.pdf` : `Stock_Complet_${today()}.pdf`;
+const filename = alertesOnly ? `Stock_${siteLbl==='SALEM'?'Salem':'Debauche'}_Alertes_${today()}.pdf` : `Stock_${siteLbl==='SALEM'?'Salem':'Debauche'}_Complet_${today()}.pdf`;
 doc.save(filename);
 showToast('Rapport téléchargé !', '#3fb950');
 }
