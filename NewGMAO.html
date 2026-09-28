@@ -1839,6 +1839,14 @@ if (scanRAF) { cancelAnimationFrame(scanRAF); scanRAF=null; }
 function closeScanner() { stopScanner(); closeModal(); }
 
 function showScanResult(eq) {
+// Opérateur de production : le QR de la laveuse ouvre directement le relevé
+if (currentRole === 'operateur') {
+if (isRlvEq(eq)) { ouvrirReleve(); return; }
+const r0=document.getElementById('scan-res'), s0=document.getElementById('scan-st');
+if (s0) s0.textContent='';
+if (r0) r0.innerHTML=`<div style="background:var(--surface2);border-left:3px solid ${C.warning};border-radius:12px;padding:14px;font-size:13px"><b>${esc(eq.nom)}</b><br><span style="color:var(--muted)">Pas de relevé de fin de poste pour cette machine. Scannez la laveuse-remplisseuse.</span></div>`;
+return;
+}
 // Stats rapides pour cette machine
 const otsM = S.ots.filter(o => o.equipementId === eq.id);
 const otsActifs = otsM.filter(o => !['terminé','annulé'].includes(o.statut)).length;
@@ -1863,6 +1871,10 @@ ${prevAVenir?`<span style="color:${C.info}">📅 ${prevAVenir} prév. à venir</
 </div>` : ''}
 <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;margin-bottom:8px">Que voulez-vous faire ?</div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+${(isRlvEq(eq) && canReleve()) ? `
+<button onclick="ouvrirReleve()" style="grid-column:span 2;background:rgba(232,151,10,.18);border:1px solid rgba(232,151,10,.5);color:${C.accent};font-size:14px;font-weight:800;padding:14px 8px;border-radius:10px;cursor:pointer;font-family:-apple-system,sans-serif;text-align:center">
+📝 Relevé fin de poste (compteurs + têtes)
+</button>` : ''}
 ${canWrite() ? `
 <button onclick="closeModal();quickPanne('${eq.id}')" style="background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.35);color:${C.danger};font-size:13px;font-weight:700;padding:13px 8px;border-radius:10px;cursor:pointer;font-family:-apple-system,sans-serif;text-align:center">
 🔧<br>Déclarer panne
@@ -2203,7 +2215,7 @@ ${title('Fin de poste — Laveuse-remplisseuse')}
 ${memoTable([
 ['1. Compteurs','Écran COMBI : Filled kegs / failed kegs L1 et L2. Écran 9.9 : Beer totalizer L1 et L2.'],
 ['2. Head statistics','Écran 10.2 : pour chaque tête, recopier les compteurs non nuls (étapes 1 à 20).'],
-['3. Enregistrer','Onglet 📝 Relevés → Saisir le relevé de fin de poste → Enregistrer.'],
+['3. Enregistrer','Onglet 📝 Relevés → 📷 Scanner le QR de la laveuse (ou bouton Saisir le relevé) → Enregistrer.'],
 ['4. Reset','Après l\'enregistrement, Reset H1–H10 sur l\'écran Head statistics, puis cocher la case.'],
 ])}
 <div style="background:rgba(232,151,10,.08);border-left:3px solid ${C.accent};border-radius:8px;padding:10px;font-size:12px;color:var(--muted)">
@@ -3257,7 +3269,9 @@ const RLV_COMPTEURS = [
 {k:'biereL1',lb:'Totalisateur bière L1',u:'L'},{k:'biereL2',lb:'Totalisateur bière L2',u:'L'},
 ];
 const canReleve = () => ['operateur','technicien','manager'].includes(currentRole);
-const rlvEq = () => S.eq.find(e => /laveuse|remplisseuse|combi/i.test(e.nom||''));
+const isRlvEq = e => /laveuse|remplisseuse|combi/i.test(e?.nom||'');
+const rlvEq = () => S.eq.find(isRlvEq);
+function ouvrirReleve() { closeModal(); S.page='releves'; render(); setTimeout(modalReleve, 50); }
 const rlvTotalDef = r => Object.values(r.defauts||{}).reduce((a,t)=>a+Object.values(t).reduce((b,v)=>b+(Number(v)||0),0),0);
 const rlvTeteDef = (r,n) => Object.values((r.defauts||{})[n]||{}).reduce((b,v)=>b+(Number(v)||0),0);
 const rlvMoi = () => {
@@ -3302,6 +3316,7 @@ ${nd?badge(nd+' déf. têtes',C.warning):badge('0 déf. têtes',C.success)}
 return `
 <div class="ph">
 <div><div class="pt">Relevés COMBI</div><div class="ps">Laveuse-remplisseuse · compteurs + Head statistics en fin de poste</div></div>
+<button class="bq" onclick="openScanner()">📷 Scanner</button>
 </div>
 ${canReleve()?`
 <div class="card" style="padding:14px;border-left:3px solid ${dejaFait?C.success:C.accent}">
