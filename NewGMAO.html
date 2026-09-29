@@ -113,6 +113,9 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .qb { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 20px; display: flex; align-items: center; justify-content: center; cursor: pointer; line-height: 1; }
 .qv { font-family: 'SF Mono', monospace; font-size: 17px; font-weight: 700; min-width: 30px; text-align: center; }
 
+/* DOCX */
+.docx-view table { border-collapse: collapse; margin: 8px 0; } .docx-view td, .docx-view th { border: 1px solid #ccc; padding: 4px 8px; vertical-align: top; }
+.docx-view img { max-width: 100%; height: auto; } .docx-view h1,.docx-view h2,.docx-view h3 { margin: 12px 0 6px; } .docx-view p { margin: 0 0 8px; }
 /* SCANNER */
 #scan-vid { width: 100%; border-radius: 12px; aspect-ratio: 4/3; object-fit: cover; display: block; background: #000; }
 
@@ -2164,6 +2167,12 @@ const memoRow = (label, val) => `
 const memoTable = rows => `<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:14px">${rows.map(r=>memoRow(r[0],r[1])).join('')}</div>`;
 const title = t => `<div style="font-size:12px;font-weight:800;color:${C.accent};text-transform:uppercase;letter-spacing:.05em;margin:4px 0 8px">${t}</div>`;
 
+// Procédure du relevé fin de poste (commune opérateurs / managers)
+const memoReleve = `
+${title('Relevé fin de poste — Laveuse-remplisseuse')}
+${memoTable(RLV_PROCEDURE)}
+<div style="background:rgba(248,81,73,.08);border-left:3px solid ${C.danger};border-radius:8px;padding:10px;font-size:12px;color:var(--muted);margin-bottom:14px">${RLV_ALERTE_RESET}</div>`;
+
 let content = '';
 if (currentRole === 'manager') {
 content = `
@@ -2182,6 +2191,13 @@ ${memoTable([
 ['Indisponibilités','Réglages → section Indisponibilités.'],
 ['Équipe / opérateurs','Réglages → section Équipe (noms + liste opérateurs).'],
 ['Supervision','Onglet Stats + rapports PDF.'],
+])}
+${memoReleve}
+${title('Suivi des relevés (manager)')}
+${memoTable([
+['Défauts par tête','Onglet 📝 Relevés : cumul 30 jours par tête + étapes les plus fréquentes.'],
+['Détail d\'un relevé','Onglet Relevés → Historique → appuyer sur le relevé.'],
+['Corriger / supprimer','Ouvrir le relevé → Supprimer (manager uniquement), puis ressaisir.'],
 ])}
 <div style="background:rgba(124,58,237,.08);border-left:3px solid #7c3aed;border-radius:8px;padding:10px;font-size:12px;color:var(--muted)">
 <b style="color:var(--text)">Bonne pratique :</b> exporte les données régulièrement, crée les comptes au plus juste, et réserve le rôle manager aux personnes de confiance.
@@ -2211,13 +2227,7 @@ ${memoTable([
 </div>`;
 } else if (currentRole === 'operateur') {
 content = `
-${title('Fin de poste — Laveuse-remplisseuse')}
-${memoTable([
-['1. Compteurs','Écran COMBI : Filled kegs / failed kegs L1 et L2. Écran 9.9 : Beer totalizer L1 et L2.'],
-['2. Head statistics','Écran 10.2 : pour chaque tête, recopier les compteurs non nuls (étapes 1 à 20).'],
-['3. Enregistrer','Onglet 📝 Relevés → 📷 Scanner le QR de la laveuse (ou bouton Saisir le relevé) → Enregistrer.'],
-['4. Reset','Après l\'enregistrement, Reset H1–H10 sur l\'écran Head statistics, puis cocher la case.'],
-])}
+${memoReleve}
 <div style="background:rgba(232,151,10,.08);border-left:3px solid ${C.accent};border-radius:8px;padding:10px;font-size:12px;color:var(--muted)">
 <b style="color:var(--text)">Un défaut qui revient souvent sur la même tête ?</b> Notez-le dans Observations et prévenez la maintenance.
 </div>`;
@@ -2696,12 +2706,39 @@ return doc;
 async function openDoc(storagePath) {
 if (!cloudEnabled || !storagePath) { alert('Document indisponible'); return; }
 showToast('Ouverture…', '#58a6ff');
+// Word (.docx) : les navigateurs ne savent pas l'afficher (page blanche) → conversion et affichage dans l'appli
+if (/\.docx$/i.test(storagePath)) { return openDocx(storagePath); }
 try {
 const { data, error } = await sb.storage.from(BUCKET).createSignedUrl(storagePath, 3600);
 if (error || !data) { alert('Impossible d\'ouvrir ce document'); return; }
 window.open(data.signedUrl, '_blank');
 } catch(e) {
 alert('Erreur d\'ouverture');
+}
+}
+
+// Affiche un .docx dans une fenêtre de l'appli (conversion locale avec mammoth.js)
+async function openDocx(storagePath) {
+const doc = S.docs.find(d => d.storagePath === storagePath);
+const nom = doc?.nom || storagePath.split('/').pop();
+try {
+if (!window.mammoth) {
+await new Promise((ok, ko) => { const sc = document.createElement('script'); sc.src = 'https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js'; sc.onload = ok; sc.onerror = ko; document.head.appendChild(sc); });
+}
+const { data, error } = await sb.storage.from(BUCKET).download(storagePath);
+if (error || !data) { alert('Impossible d\'ouvrir ce document'); return; }
+const res = await window.mammoth.convertToHtml({ arrayBuffer: await data.arrayBuffer() });
+const { data: su } = await sb.storage.from(BUCKET).createSignedUrl(storagePath, 3600, { download: nom });
+openModal(`
+<div class="mh"></div>
+<div class="mhd"><span class="mt">📝 ${esc(nom)}</span><button class="mc" onclick="closeModal()">×</button></div>
+<div class="mb">
+<div class="docx-view" style="background:#fff;color:#1a1a1a;border-radius:10px;padding:16px;font-size:14px;line-height:1.5;overflow-x:auto">${res.value || '<i>Document vide</i>'}</div>
+${su?.signedUrl?`<a href="${su.signedUrl}" class="bs" style="display:block;text-align:center;margin-top:10px;text-decoration:none">⬇ Télécharger le fichier Word</a>`:''}
+</div>`);
+} catch(e) {
+console.error('openDocx:', e);
+alert('Impossible d\'afficher ce document Word');
 }
 }
 
@@ -3264,11 +3301,19 @@ const RLV_TETES = [
 {n:7,g:'Ligne 2'},{n:8,g:'Ligne 2'},{n:9,g:'Ligne 2'},{n:10,g:'Ligne 2'},
 ];
 const RLV_COMPTEURS = [
-{k:'rempliL1',lb:'Fûts remplis L1',u:'fûts'},{k:'defautL1',lb:'Fûts en défaut L1',u:'fûts'},
-{k:'rempliL2',lb:'Fûts remplis L2',u:'fûts'},{k:'defautL2',lb:'Fûts en défaut L2',u:'fûts'},
-{k:'biereL1',lb:'Totalisateur bière L1',u:'L'},{k:'biereL2',lb:'Totalisateur bière L2',u:'L'},
+{k:'rempliL1',lb:'Fûts traités L1',u:'fûts'},{k:'defautL1',lb:'Fûts en défaut L1',u:'fûts'},
+{k:'rempliL2',lb:'Fûts traités L2',u:'fûts'},{k:'defautL2',lb:'Fûts en défaut L2',u:'fûts'},
 ];
 const canReleve = () => ['operateur','technicien','manager'].includes(currentRole);
+const RLV_PROCEDURE = [
+['1. Ouvrir le relevé','📷 Scanner le QR de la laveuse, ou onglet 📝 Relevés → Saisir le relevé de fin de poste.'],
+['2. Compteurs','Écran COMBI : Filled kegs (fûts traités) et failed kegs (fûts en défaut), L1 et L2.'],
+['3. Head statistics','Écran 10.2 : ouvrir seulement les têtes en défaut et recopier le compteur des étapes concernées (1 à 20). Cases vides = 0.'],
+['4. Observations','Noter arrêts, fuites, alarmes, problèmes du poste.'],
+['5. Enregistrer','Bouton Enregistrer le relevé.'],
+['6. Reset','Seulement APRÈS l\'enregistrement : Reset H1–H10 sur l\'écran Head statistics.'],
+];
+const RLV_ALERTE_RESET = `<b style="color:var(--text)">⚠ Toujours enregistrer AVANT le reset</b>, sinon les défauts du poste sont perdus. Cocher la case « J'ai remis les statistiques des têtes à zéro » si vous faites le reset juste après.`;
 const isRlvEq = e => /laveuse|remplisseuse|combi/i.test(e?.nom||'');
 const rlvEq = () => S.eq.find(isRlvEq);
 function ouvrirReleve() { closeModal(); S.page='releves'; render(); setTimeout(modalReleve, 50); }
@@ -3323,6 +3368,13 @@ ${canReleve()?`
 <div style="font-size:13px;margin-bottom:10px">${dejaFait?`✅ Relevé du poste <b>${rlvPosteCourant()}</b> déjà saisi aujourd'hui.`:`Poste en cours : <b>${rlvPosteCourant()}</b> — relevé à faire en fin de poste.`}</div>
 <button class="bp" style="margin-top:0" onclick="modalReleve()">📝 Saisir le relevé de fin de poste</button>
 </div>`:''}
+<details class="card" style="padding:0;overflow:hidden" ${(S.releves||[]).length?'':'open'}>
+<summary style="padding:12px 14px;cursor:pointer;font-size:13px;font-weight:700;color:${C.info}">📋 Mode d'emploi du relevé</summary>
+<div style="padding:0 14px 12px">
+${RLV_PROCEDURE.map(([a,b])=>`<div style="display:flex;gap:10px;padding:7px 0;border-top:1px solid var(--border)22;font-size:12px"><div style="width:38%;flex-shrink:0;font-weight:700">${a}</div><div style="color:var(--muted)">${b}</div></div>`).join('')}
+<div style="background:rgba(248,81,73,.08);border-left:3px solid ${C.danger};border-radius:8px;padding:10px;font-size:12px;color:var(--muted);margin-top:8px">${RLV_ALERTE_RESET}</div>
+</div>
+</details>
 <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:14px 14px 6px">Défauts par tête · 30 derniers jours</div>
 <div class="card" style="padding:10px 14px">
 ${parTete.map(t=>`
@@ -3364,8 +3416,8 @@ openModal(`
 <div class="fi"><label class="fl">Poste</label><select class="inp" id="rlv-poste">${RLV_POSTES.map(p=>`<option ${p===poste?'selected':''}>${p}</option>`).join('')}</select></div>
 </div>
 <div class="fi"><label class="fl">Opérateur</label><input class="inp" id="rlv-op" value="${esc(rlvMoi())}"/></div>
-<div style="font-size:12px;font-weight:800;color:${C.accent};text-transform:uppercase;letter-spacing:.05em;margin:14px 0 4px">1 · Compteurs (écran COMBI + Paramètres techno.)</div>
-<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Recopier les valeurs affichées : Filled / failed kegs L1 & L2, Beer totalizer L1 & L2.</div>
+<div style="font-size:12px;font-weight:800;color:${C.accent};text-transform:uppercase;letter-spacing:.05em;margin:14px 0 4px">1 · Compteurs (écran COMBI)</div>
+<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Recopier les valeurs de l'écran COMBI : Filled kegs (fûts traités) et failed kegs (fûts en défaut), L1 et L2.</div>
 <div class="g2">
 ${RLV_COMPTEURS.map(c=>`<div class="fi"><label class="fl">${c.lb} (${c.u})</label>${inpN('rlv-c-'+c.k)}</div>`).join('')}
 </div>
