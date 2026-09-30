@@ -3301,13 +3301,13 @@ const RLV_TETES = [
 {n:7,g:'Ligne 2'},{n:8,g:'Ligne 2'},{n:9,g:'Ligne 2'},{n:10,g:'Ligne 2'},
 ];
 const RLV_COMPTEURS = [
-{k:'rempliL1',lb:'Fûts traités L1',u:'fûts'},{k:'defautL1',lb:'Fûts en défaut L1',u:'fûts'},
-{k:'rempliL2',lb:'Fûts traités L2',u:'fûts'},{k:'defautL2',lb:'Fûts en défaut L2',u:'fûts'},
+{k:'rempliL1',lb:'Fûts propres L1',u:'fûts'},{k:'defautL1',lb:'Fûts en défaut L1',u:'fûts'},
+{k:'rempliL2',lb:'Fûts propres L2',u:'fûts'},{k:'defautL2',lb:'Fûts en défaut L2',u:'fûts'},
 ];
 const canReleve = () => ['operateur','technicien','manager'].includes(currentRole);
 const RLV_PROCEDURE = [
 ['1. Ouvrir le relevé','📷 Scanner le QR de la laveuse, ou onglet 📝 Relevés → Saisir le relevé de fin de poste.'],
-['2. Compteurs','Écran COMBI : Filled kegs (fûts traités) et failed kegs (fûts en défaut), L1 et L2.'],
+['2. Compteurs','Écran COMBI : Filled kegs (fûts propres) et failed kegs (fûts en défaut), L1 et L2.'],
 ['3. Head statistics','Écran 10.2 : ouvrir seulement les têtes en défaut et recopier le compteur des étapes concernées (1 à 20). Cases vides = 0.'],
 ['4. Observations','Noter arrêts, fuites, alarmes, problèmes du poste.'],
 ['5. Enregistrer','Bouton Enregistrer le relevé.'],
@@ -3417,7 +3417,7 @@ openModal(`
 </div>
 <div class="fi"><label class="fl">Opérateur</label><input class="inp" id="rlv-op" value="${esc(rlvMoi())}"/></div>
 <div style="font-size:12px;font-weight:800;color:${C.accent};text-transform:uppercase;letter-spacing:.05em;margin:14px 0 4px">1 · Compteurs (écran COMBI)</div>
-<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Recopier les valeurs de l'écran COMBI : Filled kegs (fûts traités) et failed kegs (fûts en défaut), L1 et L2.</div>
+<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Recopier les valeurs de l'écran COMBI : Filled kegs (fûts propres) et failed kegs (fûts en défaut), L1 et L2.</div>
 <div class="g2">
 ${RLV_COMPTEURS.map(c=>`<div class="fi"><label class="fl">${c.lb} (${c.u})</label>${inpN('rlv-c-'+c.k)}</div>`).join('')}
 </div>
