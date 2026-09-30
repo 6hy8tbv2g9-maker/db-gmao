@@ -3293,7 +3293,7 @@ syncDelete('prev', id); closeModal(); render();
 // ═══════════════════════════════════
 // RELEVÉS FIN DE POSTE — Laveuse-remplisseuse COMBI (Cheops)
 // ═══════════════════════════════════
-const RLV_POSTES = ['Matin','Après-midi','Nuit'];
+const RLV_POSTES = ['Matin','Après-midi','Journée'];
 const RLV_ETAPES = 20;
 const RLV_TETES = [
 {n:1,g:'Prélaveuse'},{n:2,g:'Prélaveuse'},
@@ -3323,7 +3323,7 @@ const rlvMoi = () => {
 const p = S.operateurs.find(o => o.id === currentUser?.id);
 return (p && operateurLabel(p)) || currentUser?.email || '';
 };
-const rlvPosteCourant = () => { const h = new Date().getHours(); return h>=5&&h<13?'Matin':h>=13&&h<21?'Après-midi':'Nuit'; };
+const rlvPosteCourant = () => { const h = new Date().getHours(); return h>=5&&h<13?'Matin':h>=13&&h<21?'Après-midi':'Journée'; };
 const rlvDateFr = d => d ? new Date(d+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'short',day:'2-digit',month:'2-digit'}) : '—';
 
 function pgReleves() {
