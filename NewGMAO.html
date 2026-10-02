@@ -256,7 +256,12 @@ const FREQ_DAYS = {hebdomadaire:7,mensuel:30,trimestriel:90,semestriel:182,annue
 const SITES = ['Brasserie','Conditionnement','Prépa','Salem'];
 // Stock : deux magasins distincts (colonne stock.site ; null/'' = Débauche)
 const STOCK_SITES = ['Débauche','Salem'];
-const stockSite = s => (s && s.site === 'Salem') ? 'Salem' : 'Débauche';
+const stockSite = s => (s && s.site === 'Salem') ? 'Salem' : (s && s.site === 'Conditionnement') ? 'Conditionnement' : 'Débauche';
+// Stock conditionnement : réservé aux managers (RLS côté Supabase + onglet dédié)
+const STOCK_COND = 'Conditionnement';
+const stockSitesEditables = () => canManage() ? [...STOCK_SITES, STOCK_COND] : STOCK_SITES;
+const stockSiteLbl = st => st==='Salem' ? 'SALEM' : st===STOCK_COND ? 'Conditionnement' : st;
+const stockTag = s => stockSite(s)==='Salem' ? `<span style="color:${C.info};font-weight:700">SALEM</span> · ` : stockSite(s)===STOCK_COND ? `<span style="color:#a371f7;font-weight:700">COND.</span> · ` : '';
 const eqStockSite = eqId => { const e = S.eq.find(x=>x.id===eqId); return e?.site === 'Salem' ? 'Salem' : 'Débauche'; };
 
 // ═══════════════════════════════════
@@ -1126,6 +1131,7 @@ const TABS=[
 {id:'preventif',ic:'📅',lb:'Prév.'},
 {id:'calendar',ic:'🗓',lb:'Cal.'},
 {id:'stock',ic:'📦',lb:'Stock'},
+{id:'stockcond',ic:'🏭',lb:'Stock cond.'},
 {id:'releves',ic:'📝',lb:'Relevés'},
 {id:'stats',ic:'📊',lb:'Stats'},
 {id:'settings',ic:'⚙️',lb:'Régl.'},
@@ -1135,9 +1141,11 @@ function renderNav() {
 const oA = S.ots.filter(o=>!['terminé','annulé'].includes(o.statut)&&(o.priorite==='urgent'||isOverdue(o.datePrevue))).length;
 const sA = S.stock.filter(s=>s.quantite<=s.seuilAlerte).length;
 const pA = S.prev.filter(p=>{const d=daysUntil(p.prochaineEcheance);return d!==null&&d<=7;}).length;
-const al = {dashboard:oA+sA+pA,ots:oA,stock:sA,preventif:pA};
+const sAc = S.stock.filter(s=>stockSite(s)===STOCK_COND && s.quantite<=s.seuilAlerte).length;
+const al = {dashboard:oA+sA+pA,ots:oA,stock:sA-sAc,stockcond:sAc,preventif:pA};
 
-const tabsVisibles = currentRole==='operateur' ? TABS.filter(t=>['releves','settings'].includes(t.id)) : TABS;
+const tabsVisibles = currentRole==='operateur' ? TABS.filter(t=>['releves','settings'].includes(t.id)) : TABS.filter(t=>t.id!=='stockcond' || canManage());
+if (S.page==='stockcond' && !canManage()) S.page='dashboard';
 if (currentRole==='operateur' && !['releves','settings'].includes(S.page)) S.page='releves';
 document.getElementById('nav').innerHTML = tabsVisibles.map(t => {
 const a = al[t.id]||0;
@@ -1161,7 +1169,7 @@ const wasFocused = document.activeElement?.classList.contains('si');
 const focusedId = document.activeElement?.id;
 const focusedVal = document.activeElement?.value;
 
-const fn = {dashboard:pgDashboard,equipements:pgEquipements,ots:pgOTs,preventif:pgPreventif,calendar:pgCalendar,stock:pgStock,releves:pgReleves,stats:pgStats,settings:pgSettings};
+const fn = {dashboard:pgDashboard,equipements:pgEquipements,ots:pgOTs,preventif:pgPreventif,calendar:pgCalendar,stock:()=>pgStock(),stockcond:()=>pgStock(STOCK_COND),releves:pgReleves,stats:pgStats,settings:pgSettings};
 document.getElementById('content').innerHTML = (fn[S.page]||pgDashboard)();
 
 // Restore search focus after re-render
@@ -1451,7 +1459,7 @@ ${sAlt.length?`
 ${sAlt.map(s=>`<div class="ci" onclick="modalSt('${s.id}')" style="cursor:pointer">
 <div style="flex:1">
 <div style="font-size:13px;font-weight:600">${esc(s.designation)}</div>
-<div style="font-size:11px;color:var(--muted)">${stockSite(s)==='Salem'?`<span style="color:${C.info};font-weight:700">SALEM</span> · `:''}${esc(s.reference)} · ${esc(s.localisation)}</div>
+<div style="font-size:11px;color:var(--muted)">${stockTag(s)}${esc(s.reference)} · ${esc(s.localisation)}</div>
 </div>
 <div style="color:${C.warning};font-family:monospace;font-size:18px;font-weight:700">${s.quantite}<span style="color:var(--muted);font-size:11px">/${s.seuilAlerte}</span></div>
 </div>`).join('')}
@@ -2193,6 +2201,12 @@ ${memoTable([
 ['Supervision','Onglet Stats + rapports PDF.'],
 ])}
 ${memoReleve}
+${title('Stock conditionnement (managers)')}
+${memoTable([
+['Accès','Onglet 🏭 Stock cond. — visible et modifiable uniquement par les managers (protégé côté base).'],
+['Ajouter / déplacer','Bouton + dans l\'onglet, ou champ Site (magasin) d\'une fiche pièce.'],
+['Rapport','Boutons PDF / PDF alertes en haut de l\'onglet.'],
+])}
 ${title('Suivi des relevés (manager)')}
 ${memoTable([
 ['Défauts par tête','Onglet 📝 Relevés : cumul 30 jours par tête + étapes les plus fréquentes.'],
@@ -2841,7 +2855,7 @@ return `<div data-search="${escAttr(search)}" data-id="${escAttr(s.id)}"
 style="padding:10px 12px;border-bottom:1px solid var(--border)22;cursor:pointer;display:flex;justify-content:space-between;gap:8px;align-items:center">
 <div style="flex:1;min-width:0;pointer-events:none">
 <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.designation)}</div>
-<div style="font-size:11px;color:var(--muted);margin-top:2px">${stockSite(s)==='Salem'?`<span style="color:${C.info};font-weight:700">SALEM</span> · `:''}${esc(s.reference)}${s.categorie?` · ${esc(s.categorie)}`:''}</div>
+<div style="font-size:11px;color:var(--muted);margin-top:2px">${stockTag(s)}${esc(s.reference)}${s.categorie?` · ${esc(s.categorie)}`:''}</div>
 </div>
 <span class="mono" style="font-size:12px;color:${s.quantite<=s.seuilAlerte?C.warning:C.success};font-weight:700;flex-shrink:0;pointer-events:none">${s.quantite}</span>
 </div>`;
@@ -3500,9 +3514,9 @@ syncDelete('releves', id); closeModal(); render();
 // ═══════════════════════════════════
 // STOCK
 // ═══════════════════════════════════
-function pgStock() {
+function pgStock(siteForce) {
 const q=S.search.stock.toLowerCase();
-const site=S.stockSite;
+const site=siteForce || (S.stockSite===STOCK_COND ? 'Débauche' : S.stockSite);
 const siteStock=S.stock.filter(s=>stockSite(s)===site);
 const list=siteStock.filter(s=>s.designation.toLowerCase().includes(q)||(s.reference||'').toLowerCase().includes(q)||(s.categorie||'').toLowerCase().includes(q));
 const val=siteStock.reduce((a,x)=>a+x.quantite*(x.prixUnitaire||0),0);
@@ -3549,13 +3563,13 @@ const categories = Object.keys(parCategorie).sort((a,b)=>a==='Autres'?1:b==='Aut
 return `
 <div class="ph">
 <div>
-<div class="pt">Stock PDR · ${site==='Salem'?'SALEM':site}</div>
+<div class="pt">${site===STOCK_COND?'🏭 Stock conditionnement':`Stock PDR · ${stockSiteLbl(site)}`}</div>
 <div class="ps">${list.length} réf. · <span style="color:var(--accent);font-family:monospace">${val.toFixed(2)} €</span>${alertes.length?` · <span style="color:${C.warning}">⚠ ${alertes.length} en alerte</span>`:''}</div>
 </div>
 </div>
-<div style="display:flex;gap:8px;padding:4px 2px 10px">${siteTabs}</div>
+${siteForce?`<div style="display:flex;gap:8px;align-items:center;padding:4px 2px 10px;font-size:11px;color:var(--muted)"><span style="flex:1">🔒 Visible uniquement par les managers</span><button class="bs" style="padding:6px 10px;font-size:12px" onclick="generateStockReport(false,'${STOCK_COND}')">📄 PDF</button><button class="bs" style="padding:6px 10px;font-size:12px" onclick="generateStockReport(true,'${STOCK_COND}')">⚠ PDF alertes</button></div>`:`<div style="display:flex;gap:8px;padding:4px 2px 10px">${siteTabs}</div>`}
 <div class="sc"><input id="st-search" class="si" placeholder="Rechercher…" value="${esc(S.search.stock)}" oninput="S.search.stock=this.value;render()"/></div>
-${list.length===0?`<div class="empty"><div class="empty-i">📦</div><div>Aucune pièce en stock ${site==='Salem'?'SALEM':site}</div></div>`:`
+${list.length===0?`<div class="empty"><div class="empty-i">📦</div><div>Aucune pièce en stock ${stockSiteLbl(site)}</div></div>`:`
 ${alertes.length?`
 <div style="font-size:11px;color:${C.warning};text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:14px 14px 6px;display:flex;justify-content:space-between;align-items:baseline">
 <span>⚠ EN ALERTE</span>
@@ -3585,7 +3599,7 @@ syncSave('stock', updated); render();
 function modalSt(id) {
 const s=id?S.stock.find(x=>x.id===id):null;
 const isN=!s;
-const f=s?{...s,site:stockSite(s)}:{site:S.stockSite,reference:'',designation:'',categorie:'',quantite:0,seuilAlerte:1,localisation:'',fournisseur:'',prixUnitaire:0,observations:''};
+const f=s?{...s,site:stockSite(s)}:{site:S.page==='stockcond'?STOCK_COND:(S.stockSite===STOCK_COND?'Débauche':S.stockSite),reference:'',designation:'',categorie:'',quantite:0,seuilAlerte:1,localisation:'',fournisseur:'',prixUnitaire:0,observations:''};
 
 openModal(`
 <div class="mh"></div>
@@ -3598,7 +3612,7 @@ openModal(`
 <div class="fi"><label class="fl">Référence</label><input class="inp" id="sr" value="${esc(f.reference)}" placeholder="JT-32X3"/></div>
 <div class="fi"><label class="fl">Catégorie</label><input class="inp" id="sc" value="${esc(f.categorie)}" placeholder="Joints…"/></div>
 </div>
-<div class="fi"><label class="fl">Site (magasin)</label><select class="inp" id="ssite">${STOCK_SITES.map(st=>`<option value="${st}" ${f.site===st?'selected':''}>${st==='Salem'?'SALEM':st}</option>`).join('')}</select></div>
+<div class="fi"><label class="fl">Site (magasin)</label><select class="inp" id="ssite">${stockSitesEditables().map(st=>`<option value="${st}" ${f.site===st?'selected':''}>${stockSiteLbl(st)}</option>`).join('')}</select></div>
 <div class="fi"><label class="fl">Désignation *</label><input class="inp" id="sd" value="${esc(f.designation)}" placeholder="Nom complet de la pièce"/></div>
 <div class="g2">
 <div class="fi"><label class="fl">Fournisseur</label><input class="inp" id="sf" value="${esc(f.fournisseur)}" placeholder="Nom"/></div>
@@ -3618,7 +3632,7 @@ ${canWrite()?`<button class="bp" onclick="saveSt('${isN?'':s.id}')">${isN?'Ajout
 function saveSt(id) {
 const designation=document.getElementById('sd').value.trim();
 if (!designation) { alert('Désignation obligatoire'); return; }
-const d={designation,reference:document.getElementById('sr').value,categorie:document.getElementById('sc').value,fournisseur:document.getElementById('sf').value,localisation:document.getElementById('sl').value,quantite:Number(document.getElementById('sq').value)||0,seuilAlerte:Number(document.getElementById('ss').value)||0,prixUnitaire:Number(document.getElementById('sp').value)||0,observations:document.getElementById('so').value,site:document.getElementById('ssite').value==='Salem'?'Salem':'Débauche'};
+const d={designation,reference:document.getElementById('sr').value,categorie:document.getElementById('sc').value,fournisseur:document.getElementById('sf').value,localisation:document.getElementById('sl').value,quantite:Number(document.getElementById('sq').value)||0,seuilAlerte:Number(document.getElementById('ss').value)||0,prixUnitaire:Number(document.getElementById('sp').value)||0,observations:document.getElementById('so').value,site:(v=>v==='Salem'?'Salem':(v===STOCK_COND&&canManage())?STOCK_COND:'Débauche')(document.getElementById('ssite').value)};
 const row = id ? {...S.stock.find(s=>s.id===id), ...d} : {id:uid(), ...d};
 if (id) S.stock=S.stock.map(s=>s.id===id?row:s);
 else S.stock=[...S.stock, row];
@@ -4371,7 +4385,7 @@ showToast('Rapport téléchargé !', '#3fb950');
 // ═══════════════════════════════════
 // RAPPORT PDF STOCK
 // ═══════════════════════════════════
-async function generateStockReport(alertesOnly) {
+async function generateStockReport(alertesOnly, siteForce) {
 if (!window.jspdf) { alert('Génération impossible'); return; }
 showToast('Génération du rapport…', '#58a6ff');
 
@@ -4384,8 +4398,9 @@ const cDanger = [220, 53, 69];
 const cWarning = [217, 151, 10];
 
 // Filtrer + trier par désignation A→Z
-const siteLbl = S.stockSite==='Salem' ? 'SALEM' : 'DÉBAUCHE';
-let list = S.stock.filter(s => stockSite(s) === S.stockSite);
+const siteRap = siteForce || (S.stockSite===STOCK_COND ? 'Débauche' : S.stockSite);
+const siteLbl = siteRap==='Salem' ? 'SALEM' : siteRap===STOCK_COND ? 'CONDITIONNEMENT' : 'DÉBAUCHE';
+let list = S.stock.filter(s => stockSite(s) === siteRap);
 if (alertesOnly) list = list.filter(s => s.quantite <= s.seuilAlerte);
 list.sort((a,b) => (a.designation||'').localeCompare(b.designation||'', 'fr'));
 
@@ -4460,7 +4475,8 @@ doc.text(`GMAO · ${titre}`, 14, 290);
 doc.text(`Page ${i}/${pageCount}`, 180, 290);
 }
 
-const filename = alertesOnly ? `Stock_${siteLbl==='SALEM'?'Salem':'Debauche'}_Alertes_${today()}.pdf` : `Stock_${siteLbl==='SALEM'?'Salem':'Debauche'}_Complet_${today()}.pdf`;
+const fSite = siteLbl==='SALEM'?'Salem':siteLbl==='CONDITIONNEMENT'?'Conditionnement':'Debauche';
+const filename = alertesOnly ? `Stock_${fSite}_Alertes_${today()}.pdf` : `Stock_${fSite}_Complet_${today()}.pdf`;
 doc.save(filename);
 showToast('Rapport téléchargé !', '#3fb950');
 }
