@@ -256,12 +256,17 @@ const FREQ_DAYS = {hebdomadaire:7,mensuel:30,trimestriel:90,semestriel:182,annue
 const SITES = ['Brasserie','Conditionnement','Prépa','Salem'];
 // Stock : deux magasins distincts (colonne stock.site ; null/'' = Débauche)
 const STOCK_SITES = ['Débauche','Salem'];
-const stockSite = s => (s && s.site === 'Salem') ? 'Salem' : (s && s.site === 'Conditionnement') ? 'Conditionnement' : 'Débauche';
+const stockSite = s => (s && ['Salem','Conditionnement','Brassage'].includes(s.site)) ? s.site : 'Débauche';
 // Stock conditionnement : réservé aux managers (RLS côté Supabase + onglet dédié)
 const STOCK_COND = 'Conditionnement';
-const stockSitesEditables = () => canManage() ? [...STOCK_SITES, STOCK_COND] : STOCK_SITES;
-const stockSiteLbl = st => st==='Salem' ? 'SALEM' : st===STOCK_COND ? 'Conditionnement' : st;
-const stockTag = s => stockSite(s)==='Salem' ? `<span style="color:${C.info};font-weight:700">SALEM</span> · ` : stockSite(s)===STOCK_COND ? `<span style="color:#a371f7;font-weight:700">COND.</span> · ` : '';
+const STOCK_BRAS = 'Brassage';
+const STOCK_PRIV = [STOCK_COND, STOCK_BRAS]; // stocks réservés aux managers
+const STOCK_PRIV_PAGE = { stockcond: STOCK_COND, stockbras: STOCK_BRAS };
+const STOCK_PRIV_ICON = { [STOCK_COND]: '🏭', [STOCK_BRAS]: '🌾' };
+const stockSitesEditables = () => canManage() ? [...STOCK_SITES, ...STOCK_PRIV] : STOCK_SITES;
+const stockSiteLbl = st => st==='Salem' ? 'SALEM' : st;
+const stockSitePublic = st => STOCK_PRIV.includes(st) ? 'Débauche' : st;
+const stockTag = s => { const st = stockSite(s); return st==='Salem' ? `<span style="color:${C.info};font-weight:700">SALEM</span> · ` : st===STOCK_COND ? `<span style="color:#a371f7;font-weight:700">COND.</span> · ` : st===STOCK_BRAS ? `<span style="color:#3fb950;font-weight:700">BRAS.</span> · ` : ''; };
 const eqStockSite = eqId => { const e = S.eq.find(x=>x.id===eqId); return e?.site === 'Salem' ? 'Salem' : 'Débauche'; };
 
 // ═══════════════════════════════════
@@ -1132,6 +1137,7 @@ const TABS=[
 {id:'calendar',ic:'🗓',lb:'Cal.'},
 {id:'stock',ic:'📦',lb:'Stock'},
 {id:'stockcond',ic:'🏭',lb:'Stock cond.'},
+{id:'stockbras',ic:'🌾',lb:'Stock bras.'},
 {id:'releves',ic:'📝',lb:'Relevés'},
 {id:'stats',ic:'📊',lb:'Stats'},
 {id:'settings',ic:'⚙️',lb:'Régl.'},
@@ -1142,10 +1148,11 @@ const oA = S.ots.filter(o=>!['terminé','annulé'].includes(o.statut)&&(o.priori
 const sA = S.stock.filter(s=>s.quantite<=s.seuilAlerte).length;
 const pA = S.prev.filter(p=>{const d=daysUntil(p.prochaineEcheance);return d!==null&&d<=7;}).length;
 const sAc = S.stock.filter(s=>stockSite(s)===STOCK_COND && s.quantite<=s.seuilAlerte).length;
-const al = {dashboard:oA+sA+pA,ots:oA,stock:sA-sAc,stockcond:sAc,preventif:pA};
+const sAb = S.stock.filter(s=>stockSite(s)===STOCK_BRAS && s.quantite<=s.seuilAlerte).length;
+const al = {dashboard:oA+sA+pA,ots:oA,stock:sA-sAc-sAb,stockcond:sAc,stockbras:sAb,preventif:pA};
 
-const tabsVisibles = currentRole==='operateur' ? TABS.filter(t=>['releves','settings'].includes(t.id)) : TABS.filter(t=>t.id!=='stockcond' || canManage());
-if (S.page==='stockcond' && !canManage()) S.page='dashboard';
+const tabsVisibles = currentRole==='operateur' ? TABS.filter(t=>['releves','settings'].includes(t.id)) : TABS.filter(t=>!STOCK_PRIV_PAGE[t.id] || canManage());
+if (STOCK_PRIV_PAGE[S.page] && !canManage()) S.page='dashboard';
 if (currentRole==='operateur' && !['releves','settings'].includes(S.page)) S.page='releves';
 document.getElementById('nav').innerHTML = tabsVisibles.map(t => {
 const a = al[t.id]||0;
@@ -1169,7 +1176,7 @@ const wasFocused = document.activeElement?.classList.contains('si');
 const focusedId = document.activeElement?.id;
 const focusedVal = document.activeElement?.value;
 
-const fn = {dashboard:pgDashboard,equipements:pgEquipements,ots:pgOTs,preventif:pgPreventif,calendar:pgCalendar,stock:()=>pgStock(),stockcond:()=>pgStock(STOCK_COND),releves:pgReleves,stats:pgStats,settings:pgSettings};
+const fn = {dashboard:pgDashboard,equipements:pgEquipements,ots:pgOTs,preventif:pgPreventif,calendar:pgCalendar,stock:()=>pgStock(),stockcond:()=>pgStock(STOCK_COND),stockbras:()=>pgStock(STOCK_BRAS),releves:pgReleves,stats:pgStats,settings:pgSettings};
 document.getElementById('content').innerHTML = (fn[S.page]||pgDashboard)();
 
 // Restore search focus after re-render
@@ -2201,9 +2208,9 @@ ${memoTable([
 ['Supervision','Onglet Stats + rapports PDF.'],
 ])}
 ${memoReleve}
-${title('Stock conditionnement (managers)')}
+${title('Stocks conditionnement et brassage (managers)')}
 ${memoTable([
-['Accès','Onglet 🏭 Stock cond. — visible et modifiable uniquement par les managers (protégé côté base).'],
+['Accès','Onglets 🏭 Stock cond. et 🌾 Stock bras. — visibles et modifiables uniquement par les managers (protégé côté base).'],
 ['Ajouter / déplacer','Bouton + dans l\'onglet, ou champ Site (magasin) d\'une fiche pièce.'],
 ['Rapport','Boutons PDF / PDF alertes en haut de l\'onglet.'],
 ])}
@@ -3516,7 +3523,7 @@ syncDelete('releves', id); closeModal(); render();
 // ═══════════════════════════════════
 function pgStock(siteForce) {
 const q=S.search.stock.toLowerCase();
-const site=siteForce || (S.stockSite===STOCK_COND ? 'Débauche' : S.stockSite);
+const site=siteForce || stockSitePublic(S.stockSite);
 const siteStock=S.stock.filter(s=>stockSite(s)===site);
 const list=siteStock.filter(s=>s.designation.toLowerCase().includes(q)||(s.reference||'').toLowerCase().includes(q)||(s.categorie||'').toLowerCase().includes(q));
 const val=siteStock.reduce((a,x)=>a+x.quantite*(x.prixUnitaire||0),0);
@@ -3563,11 +3570,11 @@ const categories = Object.keys(parCategorie).sort((a,b)=>a==='Autres'?1:b==='Aut
 return `
 <div class="ph">
 <div>
-<div class="pt">${site===STOCK_COND?'🏭 Stock conditionnement':`Stock PDR · ${stockSiteLbl(site)}`}</div>
+<div class="pt">${STOCK_PRIV.includes(site)?`${STOCK_PRIV_ICON[site]} Stock ${site.toLowerCase()}`:`Stock PDR · ${stockSiteLbl(site)}`}</div>
 <div class="ps">${list.length} réf. · <span style="color:var(--accent);font-family:monospace">${val.toFixed(2)} €</span>${alertes.length?` · <span style="color:${C.warning}">⚠ ${alertes.length} en alerte</span>`:''}</div>
 </div>
 </div>
-${siteForce?`<div style="display:flex;gap:8px;align-items:center;padding:4px 2px 10px;font-size:11px;color:var(--muted)"><span style="flex:1">🔒 Visible uniquement par les managers</span><button class="bs" style="padding:6px 10px;font-size:12px" onclick="generateStockReport(false,'${STOCK_COND}')">📄 PDF</button><button class="bs" style="padding:6px 10px;font-size:12px" onclick="generateStockReport(true,'${STOCK_COND}')">⚠ PDF alertes</button></div>`:`<div style="display:flex;gap:8px;padding:4px 2px 10px">${siteTabs}</div>`}
+${siteForce?`<div style="display:flex;gap:8px;align-items:center;padding:4px 2px 10px;font-size:11px;color:var(--muted)"><span style="flex:1">🔒 Visible uniquement par les managers</span><button class="bs" style="padding:6px 10px;font-size:12px" onclick="generateStockReport(false,'${site}')">📄 PDF</button><button class="bs" style="padding:6px 10px;font-size:12px" onclick="generateStockReport(true,'${site}')">⚠ PDF alertes</button></div>`:`<div style="display:flex;gap:8px;padding:4px 2px 10px">${siteTabs}</div>`}
 <div class="sc"><input id="st-search" class="si" placeholder="Rechercher…" value="${esc(S.search.stock)}" oninput="S.search.stock=this.value;render()"/></div>
 ${list.length===0?`<div class="empty"><div class="empty-i">📦</div><div>Aucune pièce en stock ${stockSiteLbl(site)}</div></div>`:`
 ${alertes.length?`
@@ -3599,7 +3606,7 @@ syncSave('stock', updated); render();
 function modalSt(id) {
 const s=id?S.stock.find(x=>x.id===id):null;
 const isN=!s;
-const f=s?{...s,site:stockSite(s)}:{site:S.page==='stockcond'?STOCK_COND:(S.stockSite===STOCK_COND?'Débauche':S.stockSite),reference:'',designation:'',categorie:'',quantite:0,seuilAlerte:1,localisation:'',fournisseur:'',prixUnitaire:0,observations:''};
+const f=s?{...s,site:stockSite(s)}:{site:STOCK_PRIV_PAGE[S.page] || stockSitePublic(S.stockSite),reference:'',designation:'',categorie:'',quantite:0,seuilAlerte:1,localisation:'',fournisseur:'',prixUnitaire:0,observations:''};
 
 openModal(`
 <div class="mh"></div>
@@ -3632,7 +3639,7 @@ ${canWrite()?`<button class="bp" onclick="saveSt('${isN?'':s.id}')">${isN?'Ajout
 function saveSt(id) {
 const designation=document.getElementById('sd').value.trim();
 if (!designation) { alert('Désignation obligatoire'); return; }
-const d={designation,reference:document.getElementById('sr').value,categorie:document.getElementById('sc').value,fournisseur:document.getElementById('sf').value,localisation:document.getElementById('sl').value,quantite:Number(document.getElementById('sq').value)||0,seuilAlerte:Number(document.getElementById('ss').value)||0,prixUnitaire:Number(document.getElementById('sp').value)||0,observations:document.getElementById('so').value,site:(v=>v==='Salem'?'Salem':(v===STOCK_COND&&canManage())?STOCK_COND:'Débauche')(document.getElementById('ssite').value)};
+const d={designation,reference:document.getElementById('sr').value,categorie:document.getElementById('sc').value,fournisseur:document.getElementById('sf').value,localisation:document.getElementById('sl').value,quantite:Number(document.getElementById('sq').value)||0,seuilAlerte:Number(document.getElementById('ss').value)||0,prixUnitaire:Number(document.getElementById('sp').value)||0,observations:document.getElementById('so').value,site:(v=>v==='Salem'?'Salem':(STOCK_PRIV.includes(v)&&canManage())?v:'Débauche')(document.getElementById('ssite').value)};
 const row = id ? {...S.stock.find(s=>s.id===id), ...d} : {id:uid(), ...d};
 if (id) S.stock=S.stock.map(s=>s.id===id?row:s);
 else S.stock=[...S.stock, row];
@@ -4398,8 +4405,8 @@ const cDanger = [220, 53, 69];
 const cWarning = [217, 151, 10];
 
 // Filtrer + trier par désignation A→Z
-const siteRap = siteForce || (S.stockSite===STOCK_COND ? 'Débauche' : S.stockSite);
-const siteLbl = siteRap==='Salem' ? 'SALEM' : siteRap===STOCK_COND ? 'CONDITIONNEMENT' : 'DÉBAUCHE';
+const siteRap = siteForce || stockSitePublic(S.stockSite);
+const siteLbl = siteRap==='Débauche' ? 'DÉBAUCHE' : siteRap.toUpperCase();
 let list = S.stock.filter(s => stockSite(s) === siteRap);
 if (alertesOnly) list = list.filter(s => s.quantite <= s.seuilAlerte);
 list.sort((a,b) => (a.designation||'').localeCompare(b.designation||'', 'fr'));
@@ -4475,7 +4482,7 @@ doc.text(`GMAO · ${titre}`, 14, 290);
 doc.text(`Page ${i}/${pageCount}`, 180, 290);
 }
 
-const fSite = siteLbl==='SALEM'?'Salem':siteLbl==='CONDITIONNEMENT'?'Conditionnement':'Debauche';
+const fSite = siteRap==='Débauche' ? 'Debauche' : siteRap;
 const filename = alertesOnly ? `Stock_${fSite}_Alertes_${today()}.pdf` : `Stock_${fSite}_Complet_${today()}.pdf`;
 doc.save(filename);
 showToast('Rapport téléchargé !', '#3fb950');
