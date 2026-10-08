@@ -3355,6 +3355,17 @@ const RLV_PROCEDURE = [
 ['5. Enregistrer','Bouton Enregistrer le relevé.'],
 ['6. Reset','Seulement APRÈS l\'enregistrement : Reset H1–H10 sur l\'écran Head statistics.'],
 ];
+// Photos de l'écran machine (fichiers dans le dossier img/ du dépôt)
+const RLV_PHOTOS = {
+'2. Compteurs': [['img/rlv_compteurs.jpg','Écran principal : compteurs Filled kegs / failed kegs L1 et L2']],
+'3. Head statistics': [['img/rlv_bonhomme.jpg','Connecté en admin : appuyer sur le bonhomme rouge'],['img/rlv_ecran90.jpg','Écran 9.0 : Statistics H1-H2, H3-H6, H7-H10'],['img/rlv_heads.jpg','Recopier les cases rouges (≠ 0) de chaque tête']],
+'6. Reset': [['img/rlv_heads.jpg','Bouton Reset sous chaque tête — uniquement après l\'enregistrement']],
+};
+function rlvZoom(i) {
+const [src, legende] = Object.values(RLV_PHOTOS).flat()[i];
+openModal(`<div class="mh"></div><div class="mhd"><span class="mt">📷 Écran machine</span><button class="mc" onclick="closeModal()">×</button></div>
+<div class="mb"><img src="${src}" alt="" style="width:100%;border-radius:10px;display:block"/><div style="font-size:12px;color:var(--muted);margin-top:8px">${esc(legende)}</div></div>`);
+}
 const RLV_ALERTE_RESET = `<b style="color:var(--text)">⚠ Toujours enregistrer AVANT le reset</b>, sinon les défauts du poste sont perdus. Cocher la case « J'ai remis les statistiques des têtes à zéro » si vous faites le reset juste après.`;
 const isRlvEq = e => /laveuse|remplisseuse|combi/i.test(e?.nom||'');
 const rlvEq = () => S.eq.find(isRlvEq);
@@ -3413,7 +3424,7 @@ ${canReleve()?`
 <details class="card" style="padding:0;overflow:hidden" ${(S.releves||[]).length?'':'open'}>
 <summary style="padding:12px 14px;cursor:pointer;font-size:13px;font-weight:700;color:${C.info}">📋 Mode d'emploi du relevé</summary>
 <div style="padding:0 14px 12px">
-${RLV_PROCEDURE.map(([a,b])=>`<div style="display:flex;gap:10px;padding:7px 0;border-top:1px solid var(--border)22;font-size:12px"><div style="width:38%;flex-shrink:0;font-weight:700">${a}</div><div style="color:var(--muted)">${b}</div></div>`).join('')}
+${RLV_PROCEDURE.map(([a,b])=>`<div style="padding:7px 0;border-top:1px solid var(--border)22;font-size:12px"><div style="display:flex;gap:10px"><div style="width:38%;flex-shrink:0;font-weight:700">${a}</div><div style="color:var(--muted)">${b}</div></div>${(RLV_PHOTOS[a]||[]).length?`<div style="display:flex;gap:6px;margin-top:8px;overflow-x:auto">${RLV_PHOTOS[a].map(([src,lg])=>{const i=Object.values(RLV_PHOTOS).flat().findIndex(x=>x[0]===src&&x[1]===lg);return `<figure style="margin:0;flex:1 0 30%;max-width:${RLV_PHOTOS[a].length>1?'48%':'70%'}" onclick="rlvZoom(${i})"><img src="${src}" alt="" loading="lazy" onerror="this.closest('figure').style.display='none'" style="width:100%;border-radius:8px;display:block;border:1px solid var(--border);cursor:zoom-in"/><figcaption style="font-size:10px;color:var(--muted);margin-top:3px">🔍 ${lg}</figcaption></figure>`;}).join('')}</div>`:''}</div>`).join('')}
 <div style="background:rgba(248,81,73,.08);border-left:3px solid ${C.danger};border-radius:8px;padding:10px;font-size:12px;color:var(--muted);margin-top:8px">${RLV_ALERTE_RESET}</div>
 </div>
 </details>
