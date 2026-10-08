@@ -4560,6 +4560,7 @@ ${canManage() ? `
 <div style="font-size:11px;color:var(--muted);margin-top:6px">Utilisé pour calculer automatiquement le coût main d'œuvre des OT</div>
 </div>
 </div>
+${sectionAnnonce()}
 ` : ''}
 
 <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">☁️ SYNCHRONISATION</div>
@@ -4921,6 +4922,73 @@ showToast('Erreur · cache local', '#f85149');
 }
 initInProgress = false;
 render();
+setTimeout(checkAnnonce, 500);
+}
+
+// ═══════════════════════════════════
+// ANNONCE (pop-up affiché une fois à chaque utilisateur)
+// settings : 'annonce' = {id, titre, texte, date, auteur} ; 'annonce-lu-<userId>' = id lu
+// ═══════════════════════════════════
+const getAnnonce = () => { try { const a = JSON.parse(getSetting('annonce', '') || 'null'); return a && a.id ? a : null; } catch(e) { return null; } };
+const annonceLue = (a, userId) => getSetting(`annonce-lu-${userId}`, '') === a.id;
+const annonceHtml = t => esc(t||'').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
+
+function checkAnnonce() {
+const a = getAnnonce();
+if (!a || !currentUser || annonceLue(a, currentUser.id)) return;
+if (document.getElementById('modal-o')) { setTimeout(checkAnnonce, 2000); return; }
+openModal(`
+<div class="mh"></div>
+<div class="mhd"><span class="mt">📢 ${esc(a.titre || 'Information')}</span><button class="mc" onclick="lireAnnonce('${a.id}')">×</button></div>
+<div class="mb">
+<div style="font-size:14px;line-height:1.55">${annonceHtml(a.texte)}</div>
+<div style="font-size:11px;color:var(--muted);margin-top:12px">${a.auteur ? esc(a.auteur)+' · ' : ''}${a.date ? new Date(a.date).toLocaleDateString('fr-FR') : ''}</div>
+<button class="bp" onclick="lireAnnonce('${a.id}')">J'ai compris</button>
+</div>`);
+}
+
+async function lireAnnonce(id) {
+closeModal();
+if (currentUser) await setSetting(`annonce-lu-${currentUser.id}`, id);
+}
+
+async function publierAnnonce() {
+const titre = document.getElementById('ann-titre').value.trim();
+const texte = document.getElementById('ann-texte').value.trim();
+if (!texte) { alert('Écrivez le message'); return; }
+if (!confirm('Publier cette annonce ? Elle s\'affichera à tout le monde à la prochaine ouverture.')) return;
+const me = S.operateurs.find(o => o.id === currentUser?.id);
+await setSetting('annonce', JSON.stringify({ id: uid(), titre, texte, date: new Date().toISOString(), auteur: me ? operateurLabel(me) : (currentUser?.email||'') }));
+showToast('Annonce publiée', C.success); render();
+}
+
+async function retirerAnnonce() {
+if (!confirm('Retirer l\'annonce en cours ?')) return;
+await setSetting('annonce', '');
+showToast('Annonce retirée', C.success); render();
+}
+
+function sectionAnnonce() {
+const a = getAnnonce();
+const membres = [...S.operateurs].sort((x,y)=>operateurLabel(x).localeCompare(operateurLabel(y),'fr'));
+const lus = a ? membres.filter(m => annonceLue(a, m.id)) : [];
+const nonLus = a ? membres.filter(m => !annonceLue(a, m.id)) : [];
+return `
+<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">📢 ANNONCE (POP-UP)</div>
+<div class="card" style="padding:14px">
+${a ? `
+<div style="background:var(--surface2);border-left:3px solid ${C.accent};border-radius:8px;padding:10px;margin-bottom:10px">
+<div style="font-weight:700;margin-bottom:4px">${esc(a.titre||'Information')}</div>
+<div style="font-size:12px;color:var(--muted)">${annonceHtml(a.texte)}</div>
+</div>
+<div style="font-size:12px;margin-bottom:6px"><b style="color:${C.success}">✓ Lu par ${lus.length}/${membres.length}</b>${lus.length?` : ${lus.map(m=>esc(operateurLabel(m))).join(', ')}`:''}</div>
+${nonLus.length?`<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Pas encore lu : ${nonLus.map(m=>esc(operateurLabel(m))).join(', ')}</div>`:''}
+<button class="bd" style="margin-top:0;margin-bottom:12px" onclick="retirerAnnonce()">Retirer l'annonce</button>
+` : `<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Aucune annonce en cours.</div>`}
+<div class="fi"><label class="fl">${a?'Nouvelle annonce (remplace la précédente)':'Nouvelle annonce'}</label><input class="inp" id="ann-titre" placeholder="Titre (ex. Nouveau dans la GMAO)"/></div>
+<div class="fi"><textarea class="ta" id="ann-texte" placeholder="Message… (**gras** possible)" style="min-height:110px"></textarea></div>
+<button class="bp" style="margin-top:0" onclick="publierAnnonce()">📢 Publier pour tout le monde</button>
+</div>`;
 }
 
 // Démarrage : vérifier l'authentification avant tout
