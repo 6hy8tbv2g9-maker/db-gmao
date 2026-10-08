@@ -85,12 +85,13 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 /* MODAL BOTTOM SHEET */
 .mo { position: fixed; inset: 0; background: rgba(0,0,0,.72); z-index: 50; display: flex; align-items: flex-end; animation: fi .2s ease; }
 @keyframes fi { from { opacity: 0; } to { opacity: 1; } }
-.ms { width: 100%; background: var(--surface); border-radius: 20px 20px 0 0; max-height: 93vh; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: max(env(safe-area-inset-bottom), 16px); animation: su .3s cubic-bezier(.34,1.56,.64,1); }
+.ms { width: 100%; background: var(--surface); border-radius: 20px 20px 0 0; max-height: calc(100vh - env(safe-area-inset-top) - 24px); max-height: calc(100dvh - env(safe-area-inset-top) - 24px); overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; padding-bottom: max(env(safe-area-inset-bottom), 16px); animation: su .3s cubic-bezier(.34,1.56,.64,1); }
 @keyframes su { from { transform: translateY(100%); } to { transform: translateY(0); } }
-.mh { width: 36px; height: 4px; background: var(--border); border-radius: 2px; margin: 12px auto 0; }
-.mhd { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.mh { width: 44px; height: 5px; background: var(--border); border-radius: 3px; margin: 0 auto; position: sticky; top: 0; z-index: 6; box-shadow: 0 -12px 0 12px var(--surface); }
+.mhd { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px 12px 18px; border-bottom: 1px solid var(--border); position: sticky; top: 5px; background: var(--surface); z-index: 5; }
+.ms > .mh:first-child { margin-top: 10px; }
 .mt { font-size: 17px; font-weight: 700; }
-.mc { background: var(--surface2); border: none; color: var(--muted); cursor: pointer; width: 28px; height: 28px; border-radius: 14px; font-size: 18px; display: flex; align-items: center; justify-content: center; }
+.mc { background: var(--surface2); border: none; color: var(--text); cursor: pointer; width: 40px; height: 40px; min-width: 40px; border-radius: 20px; font-size: 22px; display: flex; align-items: center; justify-content: center; }
 .mb { padding: 16px 18px; }
 
 /* FORM */
@@ -1644,11 +1645,13 @@ body * { visibility: hidden; }
 </style>
 `;
 document.body.appendChild(overlay);
+try { history.pushState({print:1}, ''); } catch(e){}
 }
 
-function closePrintView() {
+function closePrintView(fromPop) {
 const el = document.getElementById('print-overlay');
 if (el) el.remove();
+if (!fromPop && history.state && history.state.print) { try { window._skipPop = true; history.back(); } catch(e){} }
 }
 
 function printSingleQR(eqId) {
@@ -3656,18 +3659,31 @@ syncDelete('stock', id); closeModal(); render();
 // MODAL SYSTEM
 // ═══════════════════════════════════
 function openModal(html) {
-closeModal();
+closeModal(true); // remplace la fenêtre éventuelle sans toucher à l'historique
 const o=document.createElement('div');
 o.className='mo'; o.id='modal-o';
 o.innerHTML=`<div class="ms">${html}</div>`;
 o.addEventListener('click',e=>{ if(e.target===o){stopScanner();closeModal();} });
 document.body.appendChild(o);
+// Glisser vers le bas pour fermer (iPhone : la croix peut être difficile à atteindre)
+const ms=o.querySelector('.ms'); let y0=null, dy=0;
+ms.addEventListener('touchstart',e=>{ y0 = ms.scrollTop<=0 ? e.touches[0].clientY : null; dy=0; },{passive:true});
+ms.addEventListener('touchmove',e=>{ if(y0===null) return; dy=e.touches[0].clientY-y0; if(dy>0){ ms.style.transform=`translateY(${dy}px)`; ms.style.transition='none'; } },{passive:true});
+ms.addEventListener('touchend',()=>{ if(y0===null) return; ms.style.transition='transform .2s'; if(dy>110){ stopScanner(); closeModal(); } else { ms.style.transform=''; } y0=null; });
+// Bouton/geste « retour » du téléphone : ferme la fenêtre au lieu de quitter l'appli
+if (!(history.state && history.state.modal)) { try { history.pushState({modal:1}, ''); } catch(e){} }
 }
 
-function closeModal() {
+function closeModal(fromPop) {
 const el=document.getElementById('modal-o');
 if (el) { stopScanner(); el.remove(); }
+if (!fromPop && history.state && history.state.modal) { try { window._skipPop = true; history.back(); } catch(e){} }
 }
+window.addEventListener('popstate', () => {
+if (window._skipPop) { window._skipPop = false; return; }
+if (document.getElementById('print-overlay')) { closePrintView(true); return; }
+closeModal(true);
+});
 
 // ═══════════════════════════════════
 // STATISTIQUES
