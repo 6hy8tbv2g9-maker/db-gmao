@@ -3361,6 +3361,10 @@ const RLV_PHOTOS = {
 '3. Head statistics': [['img/rlv_bonhomme.jpg','Connecté en admin : appuyer sur le bonhomme rouge'],['img/rlv_ecran90.jpg','Écran 9.0 : Statistics H1-H2, H3-H6, H7-H10'],['img/rlv_heads.jpg','Recopier les cases rouges (≠ 0) de chaque tête']],
 '6. Reset': [['img/rlv_reset_compteurs.jpg','Écran principal : Reset des compteurs L1 / L2'],['img/rlv_reset_tetes.jpg','Écrans Statistics : Reset H1 à H10 sous chaque tête']],
 };
+function rlvProcedureHtml() {
+return `${RLV_PROCEDURE.map(([a,b])=>`<div style="padding:7px 0;border-top:1px solid var(--border)22;font-size:12px"><div style="display:flex;gap:10px"><div style="width:38%;flex-shrink:0;font-weight:700">${a}</div><div style="color:var(--muted)">${b}</div></div>${(RLV_PHOTOS[a]||[]).length?`<div style="display:flex;gap:6px;margin-top:8px;overflow-x:auto">${RLV_PHOTOS[a].map(([src,lg])=>{const i=Object.values(RLV_PHOTOS).flat().findIndex(x=>x[0]===src&&x[1]===lg);return `<figure style="margin:0;flex:1 0 30%;max-width:${RLV_PHOTOS[a].length>1?'48%':'70%'}" onclick="rlvZoom(${i})"><img src="${src}" alt="" loading="lazy" onerror="this.closest('figure').style.display='none'" style="width:100%;border-radius:8px;display:block;border:1px solid var(--border);cursor:zoom-in"/><figcaption style="font-size:10px;color:var(--muted);margin-top:3px">🔍 ${lg}</figcaption></figure>`;}).join('')}</div>`:''}</div>`).join('')}
+<div style="background:rgba(248,81,73,.08);border-left:3px solid ${C.danger};border-radius:8px;padding:10px;font-size:12px;color:var(--muted);margin-top:8px">${RLV_ALERTE_RESET}</div>`;
+}
 function rlvZoom(i) {
 const [src, legende] = Object.values(RLV_PHOTOS).flat()[i];
 openModal(`<div class="mh"></div><div class="mhd"><span class="mt">📷 Écran machine</span><button class="mc" onclick="closeModal()">×</button></div>
@@ -3424,8 +3428,7 @@ ${canReleve()?`
 <details class="card" style="padding:0;overflow:hidden" ${(S.releves||[]).length?'':'open'}>
 <summary style="padding:12px 14px;cursor:pointer;font-size:13px;font-weight:700;color:${C.info}">📋 Mode d'emploi du relevé</summary>
 <div style="padding:0 14px 12px">
-${RLV_PROCEDURE.map(([a,b])=>`<div style="padding:7px 0;border-top:1px solid var(--border)22;font-size:12px"><div style="display:flex;gap:10px"><div style="width:38%;flex-shrink:0;font-weight:700">${a}</div><div style="color:var(--muted)">${b}</div></div>${(RLV_PHOTOS[a]||[]).length?`<div style="display:flex;gap:6px;margin-top:8px;overflow-x:auto">${RLV_PHOTOS[a].map(([src,lg])=>{const i=Object.values(RLV_PHOTOS).flat().findIndex(x=>x[0]===src&&x[1]===lg);return `<figure style="margin:0;flex:1 0 30%;max-width:${RLV_PHOTOS[a].length>1?'48%':'70%'}" onclick="rlvZoom(${i})"><img src="${src}" alt="" loading="lazy" onerror="this.closest('figure').style.display='none'" style="width:100%;border-radius:8px;display:block;border:1px solid var(--border);cursor:zoom-in"/><figcaption style="font-size:10px;color:var(--muted);margin-top:3px">🔍 ${lg}</figcaption></figure>`;}).join('')}</div>`:''}</div>`).join('')}
-<div style="background:rgba(248,81,73,.08);border-left:3px solid ${C.danger};border-radius:8px;padding:10px;font-size:12px;color:var(--muted);margin-top:8px">${RLV_ALERTE_RESET}</div>
+${rlvProcedureHtml()}
 </div>
 </details>
 <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:14px 14px 6px">Défauts par tête · 30 derniers jours</div>
@@ -4933,18 +4936,39 @@ const getAnnonce = () => { try { const a = JSON.parse(getSetting('annonce', '') 
 const annonceLue = (a, userId) => getSetting(`annonce-lu-${userId}`, '') === a.id;
 const annonceHtml = t => esc(t||'').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
 
-function checkAnnonce() {
+function checkAnnonce(force) {
 const a = getAnnonce();
-if (!a || !currentUser || annonceLue(a, currentUser.id)) return;
-if (document.getElementById('modal-o')) { setTimeout(checkAnnonce, 2000); return; }
+if (!a || !currentUser || (!force && annonceLue(a, currentUser.id))) return;
+if (!force && document.getElementById('modal-o')) { setTimeout(checkAnnonce, 2000); return; }
 openModal(`
 <div class="mh"></div>
 <div class="mhd"><span class="mt">📢 ${esc(a.titre || 'Information')}</span><button class="mc" onclick="lireAnnonce('${a.id}')">×</button></div>
 <div class="mb">
 <div style="font-size:14px;line-height:1.55">${annonceHtml(a.texte)}</div>
+${annonceLiensHtml(a)}
 <div style="font-size:11px;color:var(--muted);margin-top:12px">${a.auteur ? esc(a.auteur)+' · ' : ''}${a.date ? new Date(a.date).toLocaleDateString('fr-FR') : ''}</div>
 <button class="bp" onclick="lireAnnonce('${a.id}')">J'ai compris</button>
 </div>`);
+}
+
+// Boutons de l'annonce : 'process' = document Process de la laveuse, 'modeReleve' = mode d'emploi du relevé
+const ANNONCE_LIENS = { process: '📄 Lire le process laveuse', modeReleve: '📋 Mode d\'emploi du relevé' };
+const docProcess = () => { const eq = rlvEq(); return S.docs.find(d => /process/i.test(d.nom||'') && (!eq || d.parentId === eq.id)) || S.docs.find(d => /process/i.test(d.nom||'')); };
+function annonceLiensHtml(a) {
+const l = (a.liens||[]).filter(k => ANNONCE_LIENS[k] && (k !== 'process' || docProcess()));
+if (!l.length) return '';
+return `<div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">${l.map(k=>`<button class="bs" style="width:100%;padding:12px;font-size:14px;font-weight:700" onclick="annonceOuvrir('${k}')">${ANNONCE_LIENS[k]}</button>`).join('')}</div>`;
+}
+const btnRetourAnnonce = () => getAnnonce() ? `<button class="bs" style="width:100%;margin-bottom:12px" onclick="closeModal(true);checkAnnonce(true)">← Retour à l'annonce</button>` : '';
+async function annonceOuvrir(k) {
+if (k === 'process') {
+const d = docProcess(); if (!d) { alert('Document introuvable'); return; }
+await openDocx(d.storagePath);
+const mb = document.querySelector('#modal-o .mb'); if (mb) mb.insertAdjacentHTML('afterbegin', btnRetourAnnonce());
+} else if (k === 'modeReleve') {
+openModal(`<div class="mh"></div><div class="mhd"><span class="mt">📋 Mode d'emploi du relevé</span><button class="mc" onclick="closeModal()">×</button></div>
+<div class="mb">${btnRetourAnnonce()}${rlvProcedureHtml()}</div>`);
+}
 }
 
 async function lireAnnonce(id) {
@@ -4958,7 +4982,8 @@ const texte = document.getElementById('ann-texte').value.trim();
 if (!texte) { alert('Écrivez le message'); return; }
 if (!confirm('Publier cette annonce ? Elle s\'affichera à tout le monde à la prochaine ouverture.')) return;
 const me = S.operateurs.find(o => o.id === currentUser?.id);
-await setSetting('annonce', JSON.stringify({ id: uid(), titre, texte, date: new Date().toISOString(), auteur: me ? operateurLabel(me) : (currentUser?.email||'') }));
+const liens = [...document.querySelectorAll('.ann-lien:checked')].map(c => c.value);
+await setSetting('annonce', JSON.stringify({ id: uid(), titre, texte, liens, date: new Date().toISOString(), auteur: me ? operateurLabel(me) : (currentUser?.email||'') }));
 showToast('Annonce publiée', C.success); render();
 }
 
@@ -4980,6 +5005,7 @@ ${a ? `
 <div style="background:var(--surface2);border-left:3px solid ${C.accent};border-radius:8px;padding:10px;margin-bottom:10px">
 <div style="font-weight:700;margin-bottom:4px">${esc(a.titre||'Information')}</div>
 <div style="font-size:12px;color:var(--muted)">${annonceHtml(a.texte)}</div>
+${(a.liens||[]).length?`<div style="font-size:11px;color:${C.info};margin-top:6px">Boutons : ${(a.liens||[]).map(k=>ANNONCE_LIENS[k]).filter(Boolean).join(' · ')}</div>`:''}
 </div>
 <div style="font-size:12px;margin-bottom:6px"><b style="color:${C.success}">✓ Lu par ${lus.length}/${membres.length}</b>${lus.length?` : ${lus.map(m=>esc(operateurLabel(m))).join(', ')}`:''}</div>
 ${nonLus.length?`<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Pas encore lu : ${nonLus.map(m=>esc(operateurLabel(m))).join(', ')}</div>`:''}
@@ -4987,7 +5013,9 @@ ${nonLus.length?`<div style="font-size:12px;color:var(--muted);margin-bottom:10p
 ` : `<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Aucune annonce en cours.</div>`}
 <div class="fi"><label class="fl">${a?'Nouvelle annonce (remplace la précédente)':'Nouvelle annonce'}</label><input class="inp" id="ann-titre" placeholder="Titre (ex. Nouveau dans la GMAO)"/></div>
 <div class="fi"><textarea class="ta" id="ann-texte" placeholder="Message… (**gras** possible)" style="min-height:110px"></textarea></div>
-<button class="bp" style="margin-top:0" onclick="publierAnnonce()">📢 Publier pour tout le monde</button>
+<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Boutons à ajouter dans le pop-up :</div>
+${Object.entries(ANNONCE_LIENS).map(([k,lb])=>`<label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:6px"><input type="checkbox" class="ann-lien" value="${k}" ${a&&(a.liens||[]).includes(k)?'checked':''} style="width:18px;height:18px"/>${lb}</label>`).join('')}
+<button class="bp" onclick="publierAnnonce()">📢 Publier pour tout le monde</button>
 </div>`;
 }
 
