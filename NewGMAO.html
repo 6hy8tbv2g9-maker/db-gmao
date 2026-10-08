@@ -1178,10 +1178,28 @@ const focusedId = document.activeElement?.id;
 const focusedVal = document.activeElement?.value;
 
 const fn = {dashboard:pgDashboard,equipements:pgEquipements,ots:pgOTs,preventif:pgPreventif,calendar:pgCalendar,stock:()=>pgStock(),stockcond:()=>pgStock(STOCK_COND),stockbras:()=>pgStock(STOCK_BRAS),releves:pgReleves,stats:pgStats,settings:pgSettings};
-document.getElementById('content').innerHTML = (fn[S.page]||pgDashboard)();
+const contentEl = document.getElementById('content');
+const html = (fn[S.page]||pgDashboard)();
+// Saisie en cours dans une barre de recherche : on garde le champ dans la page
+// (le recréer faisait repasser le clavier iPhone sur les lettres à chaque caractère)
+const actEl = document.activeElement;
+if (wasFocused && focusedId && contentEl.contains(actEl)) {
+const tmp = document.createElement('div'); tmp.innerHTML = html;
+const newIn = tmp.querySelector('#'+CSS.escape(focusedId));
+let oldHolder = actEl; while (oldHolder.parentNode !== contentEl) oldHolder = oldHolder.parentNode;
+let newHolder = newIn; while (newHolder && newHolder.parentNode !== tmp) newHolder = newHolder.parentNode;
+if (newHolder) {
+[...contentEl.childNodes].forEach(n => { if (n !== oldHolder) n.remove(); });
+const nodes = [...tmp.childNodes]; const i = nodes.indexOf(newHolder);
+nodes.slice(0, i).forEach(n => contentEl.insertBefore(n, oldHolder));
+nodes.slice(i + 1).forEach(n => contentEl.appendChild(n));
+} else { contentEl.innerHTML = html; }
+} else {
+contentEl.innerHTML = html;
+}
 
 // Restore search focus after re-render
-if (wasFocused && focusedId) {
+if (wasFocused && focusedId && document.activeElement?.id !== focusedId) {
 const el = document.getElementById(focusedId);
 if (el) { el.focus(); el.setSelectionRange && el.setSelectionRange(el.value.length,el.value.length); }
 }
@@ -3332,7 +3350,7 @@ const canReleve = () => ['operateur','technicien','manager'].includes(currentRol
 const RLV_PROCEDURE = [
 ['1. Ouvrir le relevé','📷 Scanner le QR de la laveuse, ou onglet 📝 Relevés → Saisir le relevé de fin de poste.'],
 ['2. Compteurs','Écran COMBI : Filled kegs (fûts propres) et failed kegs (fûts en défaut), L1 et L2.'],
-['3. Head statistics','Écran 10.2 : ouvrir seulement les têtes en défaut et recopier le compteur des étapes concernées (1 à 20). Cases vides = 0.'],
+['3. Head statistics','Sur l\'écran de la machine : se connecter en admin, appuyer sur le bonhomme rouge → écran 9.0, puis « Statistics H1-H2 », « Statistics H3-H6 » et « Statistics H7-H10 ». Dans la GMAO, ouvrir seulement les têtes en défaut et recopier le compteur des étapes concernées (1 à 20). Cases vides = 0.'],
 ['4. Observations','Noter arrêts, fuites, alarmes, problèmes du poste.'],
 ['5. Enregistrer','Bouton Enregistrer le relevé.'],
 ['6. Reset','Seulement APRÈS l\'enregistrement : Reset H1–H10 sur l\'écran Head statistics.'],
@@ -3445,8 +3463,8 @@ openModal(`
 <div class="g2">
 ${RLV_COMPTEURS.map(c=>`<div class="fi"><label class="fl">${c.lb} (${c.u})</label>${inpN('rlv-c-'+c.k)}</div>`).join('')}
 </div>
-<div style="font-size:12px;font-weight:800;color:${C.accent};text-transform:uppercase;letter-spacing:.05em;margin:14px 0 4px">2 · Head statistics (écran 10.2)</div>
-<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Ouvrir uniquement les têtes qui ont des défauts et saisir le compteur de chaque étape (1 à 20). Cases vides = 0.</div>
+<div style="font-size:12px;font-weight:800;color:${C.accent};text-transform:uppercase;letter-spacing:.05em;margin:14px 0 4px">2 · Head statistics</div>
+<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Machine : connexion admin → bonhomme rouge → écran 9.0 → « Statistics H1-H2 », « H3-H6 », « H7-H10 ». Ouvrir uniquement les têtes qui ont des défauts et saisir le compteur de chaque étape (1 à 20). Cases vides = 0.</div>
 ${RLV_TETES.map(teteBloc).join('')}
 <label style="display:flex;gap:10px;align-items:flex-start;font-size:13px;margin:12px 0;cursor:pointer">
 <input type="checkbox" id="rlv-reset" style="width:20px;height:20px;flex-shrink:0;margin-top:1px"/>
@@ -3629,8 +3647,8 @@ openModal(`
 <div class="fi"><label class="fl">Localisation</label><input class="inp" id="sl" value="${esc(f.localisation)}" placeholder="Rayon A-12"/></div>
 </div>
 <div class="g3">
-<div class="fi"><label class="fl">Qté</label><input class="inp" type="number" min="0" id="sq" value="${f.quantite}"/></div>
-<div class="fi"><label class="fl">Seuil min.</label><input class="inp" type="number" min="0" id="ss" value="${f.seuilAlerte}"/></div>
+<div class="fi"><label class="fl">Qté</label><input class="inp" type="number" min="0" inputmode="numeric" id="sq" value="${f.quantite}"/></div>
+<div class="fi"><label class="fl">Seuil min.</label><input class="inp" type="number" min="0" inputmode="numeric" id="ss" value="${f.seuilAlerte}"/></div>
 <div class="fi"><label class="fl">PU (€)</label><input class="inp" type="number" min="0" step="0.01" id="sp" value="${f.prixUnitaire}"/></div>
 </div>
 <div class="fi"><label class="fl">Observations</label><textarea class="ta" id="so">${esc(f.observations)}</textarea></div>
@@ -3664,6 +3682,8 @@ const o=document.createElement('div');
 o.className='mo'; o.id='modal-o';
 o.innerHTML=`<div class="ms">${html}</div>`;
 o.addEventListener('click',e=>{ if(e.target===o){stopScanner();closeModal();} });
+// Clavier chiffres sur iPhone pour les champs numériques entiers
+o.querySelectorAll('input[type=number]:not([inputmode])').forEach(i => { if (!i.step || i.step === '1') i.setAttribute('inputmode','numeric'); });
 document.body.appendChild(o);
 // Glisser vers le bas pour fermer (iPhone : la croix peut être difficile à atteindre)
 const ms=o.querySelector('.ms'); let y0=null, dy=0;
