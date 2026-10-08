@@ -4936,18 +4936,42 @@ const getAnnonce = () => { try { const a = JSON.parse(getSetting('annonce', '') 
 const annonceLue = (a, userId) => getSetting(`annonce-lu-${userId}`, '') === a.id;
 const annonceHtml = t => esc(t||'').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
 
+// Annonces ciblées (en plus de l'annonce pour tout le monde)
+// settings : 'annonces-ciblees' = [{id, titre, texte, liens, dest:{roles:[], users:[]}, date, auteur}] ; 'annonce-lu-<annId>-<userId>' = '1'
+const ANN_ROLES = { operateur: 'Opérateurs', technicien: 'Techniciens', manager: 'Managers', lecteur: 'Lecteurs' };
+const getCiblees = () => { try { const l = JSON.parse(getSetting('annonces-ciblees', '') || '[]'); return Array.isArray(l) ? l : []; } catch(e) { return []; } };
+const roleDe = userId => userId === currentUser?.id ? currentRole : ((S.operateurs.find(o => o.id === userId) || {}).role || 'lecteur');
+const estDestinataire = (a, userId) => ((a.dest?.users)||[]).includes(userId) || ((a.dest?.roles)||[]).includes(roleDe(userId));
+const cibleeLue = (a, userId) => getSetting(`annonce-lu-${a.id}-${userId}`, '') === '1';
+const destLabel = a => [...((a.dest?.roles)||[]).map(r => ANN_ROLES[r] || r), ...((a.dest?.users)||[]).map(u => { const o = S.operateurs.find(x => x.id === u); return o ? operateurLabel(o) : '?'; })].join(', ');
+
+// Annonces à afficher à l'utilisateur connecté (non lues), la générale en premier
+function annoncesAVoir() {
+if (!currentUser) return [];
+const l = [];
+const g = getAnnonce(); if (g && !annonceLue(g, currentUser.id)) l.push({ ...g, _cible: false });
+getCiblees().forEach(a => { if (estDestinataire(a, currentUser.id) && !cibleeLue(a, currentUser.id)) l.push({ ...a, _cible: true }); });
+return l;
+}
+
 function checkAnnonce(force) {
-const a = getAnnonce();
-if (!a || !currentUser || (!force && annonceLue(a, currentUser.id))) return;
-if (!force && document.getElementById('modal-o')) { setTimeout(checkAnnonce, 2000); return; }
+let a;
+if (force && window._annCur) a = window._annCur;
+else {
+const l = annoncesAVoir(); if (!l.length) return;
+if (document.getElementById('modal-o')) { setTimeout(checkAnnonce, 2000); return; }
+a = l[0]; a._reste = l.length - 1;
+}
+window._annCur = a;
 openModal(`
 <div class="mh"></div>
-<div class="mhd"><span class="mt">📢 ${esc(a.titre || 'Information')}</span><button class="mc" onclick="lireAnnonce('${a.id}')">×</button></div>
+<div class="mhd"><span class="mt">${a._cible ? '✉️' : '📢'} ${esc(a.titre || 'Information')}</span><button class="mc" onclick="lireAnnonce('${a.id}',${a._cible})">×</button></div>
 <div class="mb">
+${a._cible ? `<div style="font-size:11px;color:${C.info};font-weight:700;margin-bottom:8px">Message personnel</div>` : ''}
 <div style="font-size:14px;line-height:1.55">${annonceHtml(a.texte)}</div>
 ${annonceLiensHtml(a)}
-<div style="font-size:11px;color:var(--muted);margin-top:12px">${a.auteur ? esc(a.auteur)+' · ' : ''}${a.date ? new Date(a.date).toLocaleDateString('fr-FR') : ''}</div>
-<button class="bp" onclick="lireAnnonce('${a.id}')">J'ai compris</button>
+<div style="font-size:11px;color:var(--muted);margin-top:12px">${a.auteur ? esc(a.auteur)+' · ' : ''}${a.date ? new Date(a.date).toLocaleDateString('fr-FR') : ''}${a._reste ? ` · encore ${a._reste} message(s) après celui-ci` : ''}</div>
+<button class="bp" onclick="lireAnnonce('${a.id}',${a._cible})">J'ai compris</button>
 </div>`);
 }
 
@@ -4959,7 +4983,7 @@ const l = (a.liens||[]).filter(k => ANNONCE_LIENS[k] && (k !== 'process' || docP
 if (!l.length) return '';
 return `<div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">${l.map(k=>`<button class="bs" style="width:100%;padding:12px;font-size:14px;font-weight:700" onclick="annonceOuvrir('${k}')">${ANNONCE_LIENS[k]}</button>`).join('')}</div>`;
 }
-const btnRetourAnnonce = () => getAnnonce() ? `<button class="bs" style="width:100%;margin-bottom:12px" onclick="closeModal(true);checkAnnonce(true)">← Retour à l'annonce</button>` : '';
+const btnRetourAnnonce = () => window._annCur ? `<button class="bs" style="width:100%;margin-bottom:12px" onclick="closeModal(true);checkAnnonce(true)">← Retour à l'annonce</button>` : '';
 async function annonceOuvrir(k) {
 if (k === 'process') {
 const d = docProcess(); if (!d) { alert('Document introuvable'); return; }
@@ -4971,19 +4995,23 @@ openModal(`<div class="mh"></div><div class="mhd"><span class="mt">📋 Mode d'e
 }
 }
 
-async function lireAnnonce(id) {
-closeModal();
-if (currentUser) await setSetting(`annonce-lu-${currentUser.id}`, id);
+async function lireAnnonce(id, cible) {
+closeModal(); window._annCur = null;
+if (!currentUser) return;
+if (cible) await setSetting(`annonce-lu-${id}-${currentUser.id}`, '1');
+else await setSetting(`annonce-lu-${currentUser.id}`, id);
+setTimeout(checkAnnonce, 300); // message suivant éventuel
 }
+
+const auteurMoi = () => { const me = S.operateurs.find(o => o.id === currentUser?.id); return me ? operateurLabel(me) : (currentUser?.email||''); };
 
 async function publierAnnonce() {
 const titre = document.getElementById('ann-titre').value.trim();
 const texte = document.getElementById('ann-texte').value.trim();
 if (!texte) { alert('Écrivez le message'); return; }
 if (!confirm('Publier cette annonce ? Elle s\'affichera à tout le monde à la prochaine ouverture.')) return;
-const me = S.operateurs.find(o => o.id === currentUser?.id);
 const liens = [...document.querySelectorAll('.ann-lien:checked')].map(c => c.value);
-await setSetting('annonce', JSON.stringify({ id: uid(), titre, texte, liens, date: new Date().toISOString(), auteur: me ? operateurLabel(me) : (currentUser?.email||'') }));
+await setSetting('annonce', JSON.stringify({ id: uid(), titre, texte, liens, date: new Date().toISOString(), auteur: auteurMoi() }));
 showToast('Annonce publiée', C.success); render();
 }
 
@@ -4993,29 +5021,75 @@ await setSetting('annonce', '');
 showToast('Annonce retirée', C.success); render();
 }
 
-function sectionAnnonce() {
-const a = getAnnonce();
-const membres = [...S.operateurs].sort((x,y)=>operateurLabel(x).localeCompare(operateurLabel(y),'fr'));
-const lus = a ? membres.filter(m => annonceLue(a, m.id)) : [];
-const nonLus = a ? membres.filter(m => !annonceLue(a, m.id)) : [];
-return `
-<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">📢 ANNONCE (POP-UP)</div>
-<div class="card" style="padding:14px">
-${a ? `
-<div style="background:var(--surface2);border-left:3px solid ${C.accent};border-radius:8px;padding:10px;margin-bottom:10px">
+async function publierAnnonceCiblee() {
+const titre = document.getElementById('annc-titre').value.trim();
+const texte = document.getElementById('annc-texte').value.trim();
+const roles = [...document.querySelectorAll('.annc-role:checked')].map(c => c.value);
+const users = [...document.querySelectorAll('.annc-user:checked')].map(c => c.value);
+if (!texte) { alert('Écrivez le message'); return; }
+if (!roles.length && !users.length) { alert('Choisissez au moins un destinataire (rôle ou personne)'); return; }
+const liens = [...document.querySelectorAll('.annc-lien:checked')].map(c => c.value);
+const a = { id: uid(), titre, texte, liens, dest: { roles, users }, date: new Date().toISOString(), auteur: auteurMoi() };
+if (!confirm(`Envoyer ce message à : ${destLabel(a)} ?`)) return;
+await setSetting('annonces-ciblees', JSON.stringify([...getCiblees(), a]));
+showToast('Message envoyé', C.success); render();
+}
+
+async function retirerAnnonceCiblee(id) {
+if (!confirm('Retirer ce message ?')) return;
+await setSetting('annonces-ciblees', JSON.stringify(getCiblees().filter(a => a.id !== id)));
+showToast('Message retiré', C.success); render();
+}
+
+const titreSection = t => `<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">${t}</div>`;
+const lectureHtml = (membres, estLu) => {
+const lus = membres.filter(estLu), non = membres.filter(m => !estLu(m));
+return `<div style="font-size:12px;margin-bottom:6px"><b style="color:${C.success}">✓ Lu par ${lus.length}/${membres.length}</b>${lus.length?` : ${lus.map(m=>esc(operateurLabel(m))).join(', ')}`:''}</div>
+${non.length?`<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Pas encore lu : ${non.map(m=>esc(operateurLabel(m))).join(', ')}</div>`:''}`;
+};
+const apercuHtml = a => `<div style="background:var(--surface2);border-left:3px solid ${C.accent};border-radius:8px;padding:10px;margin-bottom:10px">
 <div style="font-weight:700;margin-bottom:4px">${esc(a.titre||'Information')}</div>
 <div style="font-size:12px;color:var(--muted)">${annonceHtml(a.texte)}</div>
 ${(a.liens||[]).length?`<div style="font-size:11px;color:${C.info};margin-top:6px">Boutons : ${(a.liens||[]).map(k=>ANNONCE_LIENS[k]).filter(Boolean).join(' · ')}</div>`:''}
-</div>
-<div style="font-size:12px;margin-bottom:6px"><b style="color:${C.success}">✓ Lu par ${lus.length}/${membres.length}</b>${lus.length?` : ${lus.map(m=>esc(operateurLabel(m))).join(', ')}`:''}</div>
-${nonLus.length?`<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Pas encore lu : ${nonLus.map(m=>esc(operateurLabel(m))).join(', ')}</div>`:''}
+</div>`;
+const cases = (cls, items, coches=[]) => items.map(([v,lb])=>`<label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:6px"><input type="checkbox" class="${cls}" value="${v}" ${coches.includes(v)?'checked':''} style="width:18px;height:18px"/>${lb}</label>`).join('');
+
+function sectionAnnonce() {
+const a = getAnnonce();
+const membres = [...S.operateurs].sort((x,y)=>operateurLabel(x).localeCompare(operateurLabel(y),'fr'));
+const ciblees = getCiblees().slice().reverse();
+return `
+${titreSection('📢 ANNONCE POUR TOUT LE MONDE (POP-UP)')}
+<div class="card" style="padding:14px">
+${a ? `${apercuHtml(a)}${lectureHtml(membres, m => annonceLue(a, m.id))}
 <button class="bd" style="margin-top:0;margin-bottom:12px" onclick="retirerAnnonce()">Retirer l'annonce</button>
 ` : `<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Aucune annonce en cours.</div>`}
 <div class="fi"><label class="fl">${a?'Nouvelle annonce (remplace la précédente)':'Nouvelle annonce'}</label><input class="inp" id="ann-titre" placeholder="Titre (ex. Nouveau dans la GMAO)"/></div>
 <div class="fi"><textarea class="ta" id="ann-texte" placeholder="Message… (**gras** possible)" style="min-height:110px"></textarea></div>
 <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Boutons à ajouter dans le pop-up :</div>
-${Object.entries(ANNONCE_LIENS).map(([k,lb])=>`<label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:6px"><input type="checkbox" class="ann-lien" value="${k}" ${a&&(a.liens||[]).includes(k)?'checked':''} style="width:18px;height:18px"/>${lb}</label>`).join('')}
+${cases('ann-lien', Object.entries(ANNONCE_LIENS), a ? (a.liens||[]) : [])}
 <button class="bp" onclick="publierAnnonce()">📢 Publier pour tout le monde</button>
+</div>
+
+${titreSection('✉️ MESSAGES CIBLÉS (POP-UP POUR CERTAINES PERSONNES)')}
+<div class="card" style="padding:14px">
+${ciblees.length ? ciblees.map(c => {
+const dests = membres.filter(m => estDestinataire(c, m.id));
+return `<div style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:12px">
+<div style="font-size:11px;color:${C.info};font-weight:700;margin-bottom:6px">Pour : ${esc(destLabel(c))}</div>
+${apercuHtml(c)}${lectureHtml(dests, m => cibleeLue(c, m.id))}
+<button class="bd" style="margin-top:0" onclick="retirerAnnonceCiblee('${c.id}')">Retirer ce message</button>
+</div>`;}).join('') : `<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Aucun message ciblé en cours.</div>`}
+<div class="fi"><label class="fl">Nouveau message ciblé</label><input class="inp" id="annc-titre" placeholder="Titre"/></div>
+<div class="fi"><textarea class="ta" id="annc-texte" placeholder="Message… (**gras** possible)" style="min-height:90px"></textarea></div>
+<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Destinataires — par rôle :</div>
+${cases('annc-role', Object.entries(ANN_ROLES))}
+<div style="font-size:12px;color:var(--muted);margin:8px 0 6px">… et/ou par personne :</div>
+${cases('annc-user', membres.map(m => [m.id, `${esc(operateurLabel(m))} <span style="color:var(--muted);font-size:11px">· ${esc(m.role||'lecteur')}</span>`]))}
+<div style="font-size:12px;color:var(--muted);margin:8px 0 6px">Boutons à ajouter :</div>
+${cases('annc-lien', Object.entries(ANNONCE_LIENS))}
+<button class="bp" onclick="publierAnnonceCiblee()">✉️ Envoyer aux destinataires choisis</button>
+<div style="font-size:11px;color:var(--muted);margin-top:8px">Les messages ciblés s'ajoutent à l'annonce générale : chacun voit d'abord l'annonce générale, puis ses messages, un par un.</div>
 </div>`;
 }
 
