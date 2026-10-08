@@ -3353,20 +3353,20 @@ const RLV_PROCEDURE = [
 ['3. Head statistics','Sur l\'écran de la machine : se connecter en admin, appuyer sur le bonhomme rouge → écran 9.0, puis « Statistics H1-H2 », « Statistics H3-H6 » et « Statistics H7-H10 ». Dans la GMAO, ouvrir seulement les têtes en défaut et recopier le compteur des étapes concernées (1 à 20). Cases vides = 0.'],
 ['4. Observations','Noter arrêts, fuites, alarmes, problèmes du poste.'],
 ['5. Enregistrer','Bouton Enregistrer le relevé.'],
-['6. Reset','Seulement APRÈS l\'enregistrement : Reset H1–H10 sur l\'écran Head statistics.'],
+['6. Reset','Seulement APRÈS l\'enregistrement : bouton Reset des compteurs sur l\'écran principal, puis Reset H1 à H10 sous chaque tête sur les écrans Statistics.'],
 ];
 // Photos de l'écran machine (fichiers dans le dossier img/ du dépôt)
 const RLV_PHOTOS = {
 '2. Compteurs': [['img/rlv_compteurs.jpg','Écran principal : compteurs Filled kegs / failed kegs L1 et L2']],
 '3. Head statistics': [['img/rlv_bonhomme.jpg','Connecté en admin : appuyer sur le bonhomme rouge'],['img/rlv_ecran90.jpg','Écran 9.0 : Statistics H1-H2, H3-H6, H7-H10'],['img/rlv_heads.jpg','Recopier les cases rouges (≠ 0) de chaque tête']],
-'6. Reset': [['img/rlv_heads.jpg','Bouton Reset sous chaque tête — uniquement après l\'enregistrement']],
+'6. Reset': [['img/rlv_reset_compteurs.jpg','Écran principal : Reset des compteurs L1 / L2'],['img/rlv_reset_tetes.jpg','Écrans Statistics : Reset H1 à H10 sous chaque tête']],
 };
 function rlvZoom(i) {
 const [src, legende] = Object.values(RLV_PHOTOS).flat()[i];
 openModal(`<div class="mh"></div><div class="mhd"><span class="mt">📷 Écran machine</span><button class="mc" onclick="closeModal()">×</button></div>
 <div class="mb"><img src="${src}" alt="" style="width:100%;border-radius:10px;display:block"/><div style="font-size:12px;color:var(--muted);margin-top:8px">${esc(legende)}</div></div>`);
 }
-const RLV_ALERTE_RESET = `<b style="color:var(--text)">⚠ Toujours enregistrer AVANT le reset</b>, sinon les défauts du poste sont perdus. Cocher la case « J'ai remis les statistiques des têtes à zéro » si vous faites le reset juste après.`;
+const RLV_ALERTE_RESET = `<b style="color:var(--text)">⚠ Toujours enregistrer AVANT le reset</b>, sinon les défauts du poste sont perdus. Cocher la case « J'ai fait les Reset » si vous les faites juste après.`;
 const isRlvEq = e => /laveuse|remplisseuse|combi/i.test(e?.nom||'');
 const rlvEq = () => S.eq.find(isRlvEq);
 function ouvrirReleve() { closeModal(); S.page='releves'; render(); setTimeout(modalReleve, 50); }
@@ -3479,7 +3479,7 @@ ${RLV_COMPTEURS.map(c=>`<div class="fi"><label class="fl">${c.lb} (${c.u})</labe
 ${RLV_TETES.map(teteBloc).join('')}
 <label style="display:flex;gap:10px;align-items:flex-start;font-size:13px;margin:12px 0;cursor:pointer">
 <input type="checkbox" id="rlv-reset" style="width:20px;height:20px;flex-shrink:0;margin-top:1px"/>
-<span>J'ai remis les statistiques des têtes à zéro (Reset H1–H10) après le relevé</span>
+<span>J'ai fait les Reset (compteurs + H1 à H10) après le relevé</span>
 </label>
 <div class="fi"><label class="fl">Observations / problèmes rencontrés</label><textarea class="ta" id="rlv-obs" placeholder="Arrêts, fuites, alarmes…"></textarea></div>
 <button class="bp" onclick="saveReleve()">Enregistrer le relevé</button>
