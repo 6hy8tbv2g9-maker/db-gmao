@@ -1445,6 +1445,7 @@ return `
 <div class="pt">Tableau de bord</div>
 <div class="ps">${new Date().toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'})}</div>
 </div>
+<button onclick="modalUrgences()" style="background:rgba(248,81,73,.15);border:1px solid rgba(248,81,73,.5);color:${C.danger};font-size:13px;font-weight:800;padding:9px 12px;border-radius:10px;cursor:pointer;font-family:-apple-system,sans-serif;white-space:nowrap">📞 Urgences</button>
 </div>
 
 <div class="kg">
@@ -3418,7 +3419,7 @@ ${nd?badge(nd+' déf. têtes',C.warning):badge('0 déf. têtes',C.success)}
 return `
 <div class="ph">
 <div><div class="pt">Relevés COMBI</div><div class="ps">Laveuse-remplisseuse · compteurs + Head statistics en fin de poste</div></div>
-<button class="bq" onclick="openScanner()">📷 Scanner</button>
+<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0"><button class="bq" onclick="openScanner()">📷 Scanner</button><button onclick="modalUrgences()" style="background:rgba(248,81,73,.15);border:1px solid rgba(248,81,73,.5);color:${C.danger};font-size:12px;font-weight:800;padding:7px 10px;border-radius:10px;cursor:pointer;font-family:-apple-system,sans-serif">📞 Urgences</button></div>
 </div>
 ${canReleve()?`
 <div class="card" style="padding:14px;border-left:3px solid ${dejaFait?C.success:C.accent}">
@@ -3551,6 +3552,58 @@ function delReleve(id) {
 if (!confirm('Supprimer ce relevé ?')) return;
 S.releves = S.releves.filter(r => r.id !== id);
 syncDelete('releves', id); closeModal(); render();
+}
+
+// ═══════════════════════════════════
+// CONTACTS D'URGENCE MAINTENANCE (document « Contacts d'urgence MAINTENANCE » — Version 3, modifié le 09/10/26)
+// ═══════════════════════════════════
+const URGENCES_VERSION = 'Version 3 · modifié le 09/10/26';
+const URGENCES = [
+{ cat:'Équipements', soc:'Anton Paar', objet:'Densimètre et CBox QC', contacts:[{nom:'Elodie Castro', tels:['01 69 18 11 87'], mail:'elodie.castro@anton-paar.com'}] },
+{ cat:'Équipements', soc:'GEA', objet:'Centrifugeuses', contacts:[{nom:'Nabil Sekkal', tels:['+33 3 23 84 81 16'], mail:'nabil.sekkal@gea.com'}] },
+{ cat:'Équipements', soc:'Cheops', objet:'Laveuse remplisseuse', contacts:[
+ {nom:'Rotislav — Automatisme', tels:['+420 730 680 387'], wa:true, note:'Via WhatsApp, en anglais'},
+ {nom:'Frantisek Simon — Commande de pièces', tels:['+420 727 883 594'], mail:'simon@cheops-chotebor.cz', note:'En anglais'}] },
+{ cat:'Équipements', soc:'Agrometal', objet:'Salle à brasser Salem', contacts:[
+ {nom:'Volodymyr — Représentant', tels:['07 49 71 02 19','07 57 69 10 21'], mail:'beer@agrometal.info', note:'Parle français'},
+ {nom:'Zoltan — Automatisme', tels:['+36 70 299 6954'], wa:true, note:'Via WhatsApp'}] },
+{ cat:'Équipements', soc:'Wild Goose', objet:'Encanneuse', contacts:[
+ {nom:'Quentin', tels:['00 34 625 31 28 75'], wa:true, note:'Via WhatsApp, parle français'},
+ {nom:'Gabriele Tomasi', tels:['00 39 347 56 74 646'], mail:'gtomasi@wildgoosefilling.com'}] },
+{ cat:'Équipements', soc:'Cometi', objet:'Chaudière', contacts:[{nom:'Astreinte 24/7', tels:['0800942526']}] },
+{ cat:'Équipements', soc:'Chalvignac', objet:'Groupe froid, réseau de glycol', contacts:[{nom:'Bruno Maugis', tels:['06 59 23 38 78'], mail:'SAVFroid@chalvignac.com'}] },
+{ cat:'Équipements', soc:'Mécatechnique', objet:'Mondo, CIMEC, étiqueteuse, convoyeurs…', contacts:[{nom:'Alexandre Barros', tels:['06 07 36 65 31'], mail:'a.barros@mecatechniqueindutrie.fr'}] },
+{ cat:'Intervenants extérieurs', soc:'GDV Bobinage', objet:'Pompes (réparations)', contacts:[{nom:'Standard', tels:['05 45 95 91 08']}] },
+{ cat:'Intervenants extérieurs', soc:'CVBF', objet:'Pompes et équipement de brasserie', contacts:[{nom:'David Leonhard', tels:['07 78 72 60 65'], mail:'cvbf.leonhard@orange.fr'}] },
+{ cat:'Intervenants extérieurs', soc:'Sylvain Longue Naud', objet:'Chaudronnerie', contacts:[{nom:'Sylvain', tels:['06 74 48 15 43'], mail:'sylvain.longue123@free.fr'}] },
+{ cat:'Intervenants extérieurs', soc:'SEFI', objet:'Joints, etc.', contacts:[{nom:'Se déplacer', adresse:"141 Bd Salvador Allende, 16340 L'Isle-d'Espagnac"}] },
+{ cat:'Intervenants extérieurs', soc:'Mécaplus', objet:'Réparations urgentes', contacts:[{nom:'Se déplacer', adresse:"35 Bd Salvador Allende, 16340 L'Isle-d'Espagnac"}] },
+{ cat:'Intervenants extérieurs', soc:'T.2.M.', objet:'Réparations urgentes', contacts:[{nom:'Thibaut Martin', tels:['06 68 49 69 13'], mail:'tmartin.t2m@gmail.com'}] },
+];
+const telHref = t => { let n = t.replace(/[^\d+]/g,''); if (n.startsWith('00')) n = '+' + n.slice(2); return n; };
+const waHref = t => 'https://wa.me/' + telHref(t).replace(/^\+/,'').replace(/^0/,'33');
+const btnLien = (href, txt, col, ext) => `<a href="${href}" ${ext?'target="_blank" rel="noopener"':''} style="display:inline-flex;align-items:center;gap:5px;padding:7px 10px;border-radius:8px;font-size:12px;font-weight:700;text-decoration:none;border:1px solid ${col}55;background:${col}18;color:${col};margin:4px 6px 0 0">${txt}</a>`;
+
+function modalUrgences(q) {
+q = (q||'').toLowerCase();
+const liste = URGENCES.filter(u => !q || JSON.stringify(u).toLowerCase().includes(q));
+const cats = [...new Set(liste.map(u => u.cat))];
+const bloc = u => `<div style="padding:10px 0;border-bottom:1px solid var(--border)22">
+<div style="font-size:14px;font-weight:800">${esc(u.soc)} <span style="font-size:12px;font-weight:600;color:var(--muted)">· ${esc(u.objet)}</span></div>
+${u.contacts.map(c => `<div style="margin-top:6px">
+<div style="font-size:13px;font-weight:600">${esc(c.nom)}${c.note?` <span style="font-size:11px;color:var(--muted);font-weight:400">(${esc(c.note)})</span>`:''}</div>
+<div>${(c.tels||[]).map(t => (c.wa ? btnLien(waHref(t), '💬 '+esc(t), '#25d366', true) : '') + btnLien('tel:'+telHref(t), '📞 '+esc(t), C.success)).join('')}${c.mail?btnLien('mailto:'+c.mail, '✉️ '+esc(c.mail), C.info):''}${c.adresse?btnLien('https://maps.google.com/?q='+encodeURIComponent(c.adresse), '📍 '+esc(c.adresse), C.accent, true):''}</div>
+</div>`).join('')}
+</div>`;
+const html = `${cats.map(cat => `<div style="font-size:11px;color:${C.accent};text-transform:uppercase;letter-spacing:.07em;font-weight:800;margin:12px 0 2px">${esc(cat)}</div>${liste.filter(u=>u.cat===cat).map(bloc).join('')}`).join('') || `<div style="color:var(--muted);font-size:13px;padding:10px 0">Aucun contact trouvé</div>`}
+<div style="font-size:10px;color:var(--muted);margin-top:12px">${URGENCES_VERSION}</div>`;
+if (document.getElementById('urg-liste')) { document.getElementById('urg-liste').innerHTML = html; return; }
+openModal(`<div class="mh"></div>
+<div class="mhd"><span class="mt">📞 Contacts d'urgence maintenance</span><button class="mc" onclick="closeModal()">×</button></div>
+<div class="mb">
+<input class="inp" placeholder="Rechercher (machine, société, nom…)" oninput="modalUrgences(this.value)" style="margin-bottom:4px"/>
+<div id="urg-liste">${html}</div>
+</div>`);
 }
 
 // ═══════════════════════════════════
