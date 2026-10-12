@@ -5031,10 +5031,46 @@ ${annonceLiensHtml(a)}
 // Boutons de l'annonce : 'process' = document Process de la laveuse, 'modeReleve' = mode d'emploi du relevé
 const ANNONCE_LIENS = { process: '📄 Lire le process laveuse', modeReleve: '📋 Mode d\'emploi du relevé' };
 const docProcess = () => { const eq = rlvEq(); return S.docs.find(d => /process/i.test(d.nom||'') && (!eq || d.parentId === eq.id)) || S.docs.find(d => /process/i.test(d.nom||'')); };
+// Documents de l'appli joints à une annonce (ids de S.docs)
+const docIcone = d => /\.docx?$/i.test(d.nom||d.storagePath||'') ? '📝' : /\.pdf$/i.test(d.nom||d.storagePath||'') ? '📕' : /\.(jpe?g|png|gif|webp|heic)$/i.test(d.nom||d.storagePath||'') ? '🖼️' : /\.(xlsx?|csv)$/i.test(d.nom||d.storagePath||'') ? '📊' : '📄';
+const docParentLabel = d => {
+if (d.parentType === 'eq') { const e = S.eq.find(x => x.id === d.parentId); return e ? e.nom : 'Machine supprimée'; }
+if (d.parentType === 'ot') { const o = S.ots.find(x => x.id === d.parentId); return o ? `OT ${o.numero||''} ${o.titre||''}`.trim() : 'OT supprimé'; }
+return 'Autres documents';
+};
+const annonceDocs = a => (a.docs||[]).map(id => S.docs.find(d => d.id === id)).filter(Boolean);
 function annonceLiensHtml(a) {
 const l = (a.liens||[]).filter(k => ANNONCE_LIENS[k] && (k !== 'process' || docProcess()));
-if (!l.length) return '';
-return `<div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">${l.map(k=>`<button class="bs" style="width:100%;padding:12px;font-size:14px;font-weight:700" onclick="annonceOuvrir('${k}')">${ANNONCE_LIENS[k]}</button>`).join('')}</div>`;
+const ds = annonceDocs(a);
+if (!l.length && !ds.length) return '';
+return `<div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">${l.map(k=>`<button class="bs" style="width:100%;padding:12px;font-size:14px;font-weight:700" onclick="annonceOuvrir('${k}')">${ANNONCE_LIENS[k]}</button>`).join('')}${ds.map(d=>`<button class="bs" style="width:100%;padding:12px;font-size:14px;font-weight:700;text-align:left" onclick="annonceOuvrirDoc('${d.id}')">${docIcone(d)} ${esc(d.nom||'Document')}</button>`).join('')}</div>`;
+}
+async function annonceOuvrirDoc(id) {
+const d = S.docs.find(x => x.id === id); if (!d || !d.storagePath) { alert('Document introuvable'); return; }
+if (/\.docx$/i.test(d.storagePath)) {
+await openDocx(d.storagePath);
+const mb = document.querySelector('#modal-o .mb'); if (mb) mb.insertAdjacentHTML('afterbegin', btnRetourAnnonce());
+} else {
+// PDF, photo, Excel… : ouverture dans un nouvel onglet (lien préparé avant l'ouverture pour iPhone)
+const w = window.open('', '_blank');
+try {
+const { data, error } = await sb.storage.from(BUCKET).createSignedUrl(d.storagePath, 3600);
+if (error || !data) throw error;
+if (w) w.location.href = data.signedUrl; else window.location.href = data.signedUrl;
+} catch(e) { if (w) w.close(); alert('Impossible d\'ouvrir ce document'); }
+}
+}
+// Sélecteur de documents (cases groupées par machine / OT, avec recherche)
+function docPicker(cls, coches=[]) {
+if (!S.docs.length) return `<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Aucun document dans l'appli.</div>`;
+const groupes = {};
+S.docs.forEach(d => { const g = docParentLabel(d); (groupes[g] = groupes[g] || []).push(d); });
+const noms = Object.keys(groupes).sort((x,y)=>x.localeCompare(y,'fr'));
+return `<input class="inp" placeholder="🔍 Rechercher un document ou une machine…" style="margin-bottom:8px" oninput="const q=this.value.toLowerCase();this.nextElementSibling.querySelectorAll('[data-q]').forEach(el=>el.style.display=el.dataset.q.includes(q)?'':'none')"/>
+<div style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:10px">
+${noms.map(g => `<div data-q="${esc((g+' '+groupes[g].map(d=>d.nom).join(' ')).toLowerCase())}"><div style="font-size:11px;font-weight:700;color:${C.accent};margin:6px 0 4px">${esc(g)}</div>
+${groupes[g].sort((x,y)=>(x.nom||'').localeCompare(y.nom||'','fr')).map(d=>`<label data-q="${esc((g+' '+(d.nom||'')).toLowerCase())}" style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:6px"><input type="checkbox" class="${cls}" value="${d.id}" ${coches.includes(d.id)?'checked':''} style="width:18px;height:18px;flex-shrink:0"/>${docIcone(d)} ${esc(d.nom||'Document')}${d.dossier?` <span style="color:var(--muted);font-size:11px">· ${esc(d.dossier)}</span>`:''}</label>`).join('')}</div>`).join('')}
+</div>`;
 }
 const btnRetourAnnonce = () => window._annCur ? `<button class="bs" style="width:100%;margin-bottom:12px" onclick="closeModal(true);checkAnnonce(true)">← Retour à l'annonce</button>` : '';
 async function annonceOuvrir(k) {
@@ -5064,7 +5100,8 @@ const texte = document.getElementById('ann-texte').value.trim();
 if (!texte) { alert('Écrivez le message'); return; }
 if (!confirm('Publier cette annonce ? Elle s\'affichera à tout le monde à la prochaine ouverture.')) return;
 const liens = [...document.querySelectorAll('.ann-lien:checked')].map(c => c.value);
-await setSetting('annonce', JSON.stringify({ id: uid(), titre, texte, liens, date: new Date().toISOString(), auteur: auteurMoi() }));
+const docs = [...document.querySelectorAll('.ann-doc:checked')].map(c => c.value);
+await setSetting('annonce', JSON.stringify({ id: uid(), titre, texte, liens, docs, date: new Date().toISOString(), auteur: auteurMoi() }));
 showToast('Annonce publiée', C.success); render();
 }
 
@@ -5082,7 +5119,8 @@ const users = [...document.querySelectorAll('.annc-user:checked')].map(c => c.va
 if (!texte) { alert('Écrivez le message'); return; }
 if (!roles.length && !users.length) { alert('Choisissez au moins un destinataire (rôle ou personne)'); return; }
 const liens = [...document.querySelectorAll('.annc-lien:checked')].map(c => c.value);
-const a = { id: uid(), titre, texte, liens, dest: { roles, users }, date: new Date().toISOString(), auteur: auteurMoi() };
+const docs = [...document.querySelectorAll('.annc-doc:checked')].map(c => c.value);
+const a = { id: uid(), titre, texte, liens, docs, dest: { roles, users }, date: new Date().toISOString(), auteur: auteurMoi() };
 if (!confirm(`Envoyer ce message à : ${destLabel(a)} ?`)) return;
 await setSetting('annonces-ciblees', JSON.stringify([...getCiblees(), a]));
 showToast('Message envoyé', C.success); render();
@@ -5103,7 +5141,7 @@ ${non.length?`<div style="font-size:12px;color:var(--muted);margin-bottom:10px">
 const apercuHtml = a => `<div style="background:var(--surface2);border-left:3px solid ${C.accent};border-radius:8px;padding:10px;margin-bottom:10px">
 <div style="font-weight:700;margin-bottom:4px">${esc(a.titre||'Information')}</div>
 <div style="font-size:12px;color:var(--muted)">${annonceHtml(a.texte)}</div>
-${(a.liens||[]).length?`<div style="font-size:11px;color:${C.info};margin-top:6px">Boutons : ${(a.liens||[]).map(k=>ANNONCE_LIENS[k]).filter(Boolean).join(' · ')}</div>`:''}
+${((a.liens||[]).length||annonceDocs(a).length)?`<div style="font-size:11px;color:${C.info};margin-top:6px">Boutons : ${[...(a.liens||[]).map(k=>ANNONCE_LIENS[k]).filter(Boolean),...annonceDocs(a).map(d=>docIcone(d)+' '+esc(d.nom||'Document'))].join(' · ')}</div>`:''}
 </div>`;
 const cases = (cls, items, coches=[]) => items.map(([v,lb])=>`<label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:6px"><input type="checkbox" class="${cls}" value="${v}" ${coches.includes(v)?'checked':''} style="width:18px;height:18px"/>${lb}</label>`).join('');
 
@@ -5121,6 +5159,8 @@ ${a ? `${apercuHtml(a)}${lectureHtml(membres, m => annonceLue(a, m.id))}
 <div class="fi"><textarea class="ta" id="ann-texte" placeholder="Message… (**gras** possible)" style="min-height:110px"></textarea></div>
 <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Boutons à ajouter dans le pop-up :</div>
 ${cases('ann-lien', Object.entries(ANNONCE_LIENS), a ? (a.liens||[]) : [])}
+<div style="font-size:12px;color:var(--muted);margin:8px 0 6px">Documents de l'appli à joindre :</div>
+${docPicker('ann-doc', a ? (a.docs||[]) : [])}
 <button class="bp" onclick="publierAnnonce()">📢 Publier pour tout le monde</button>
 </div>
 
@@ -5141,6 +5181,8 @@ ${cases('annc-role', Object.entries(ANN_ROLES))}
 ${cases('annc-user', membres.map(m => [m.id, `${esc(operateurLabel(m))} <span style="color:var(--muted);font-size:11px">· ${esc(m.role||'lecteur')}</span>`]))}
 <div style="font-size:12px;color:var(--muted);margin:8px 0 6px">Boutons à ajouter :</div>
 ${cases('annc-lien', Object.entries(ANNONCE_LIENS))}
+<div style="font-size:12px;color:var(--muted);margin:8px 0 6px">Documents de l'appli à joindre :</div>
+${docPicker('annc-doc')}
 <button class="bp" onclick="publierAnnonceCiblee()">✉️ Envoyer aux destinataires choisis</button>
 <div style="font-size:11px;color:var(--muted);margin-top:8px">Les messages ciblés s'ajoutent à l'annonce générale : chacun voit d'abord l'annonce générale, puis ses messages, un par un.</div>
 </div>`;
