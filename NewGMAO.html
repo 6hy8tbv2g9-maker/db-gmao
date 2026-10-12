@@ -708,6 +708,7 @@ if(btn){btn.textContent='Définir le mot de passe';btn.disabled=false;}
 const VAPID_PUBLIC_KEY = 'BFO6zNSEyxr8u9q8UpGI-yYsb86SrlflcMDD9wp9C4XvaaAr-tn-KLdbPePfImqJUT8vEwWvFuQscK51Wigmj0w';
 let swRegistration = null;
 let pushOn = false;
+let pushChecked = false;
 
 function urlBase64ToUint8Array(base64String) {
 const padding = '='.repeat((4 - base64String.length % 4) % 4);
@@ -1205,9 +1206,10 @@ if (el) { el.focus(); el.setSelectionRange && el.setSelectionRange(el.value.leng
 }
 
 // Met à jour l'état des notifications push sur la page Réglages
-if (S.page === 'settings' && pushSupported()) {
+if (['settings','releves'].includes(S.page) && pushSupported()) {
 isPushSubscribed().then(on => {
-if (on !== pushOn) { pushOn = on; render(); }
+const first = !pushChecked; pushChecked = true;
+if (on !== pushOn || (first && !on)) { pushOn = on; render(); }
 });
 }
 }
@@ -3421,6 +3423,9 @@ return `
 <div><div class="pt">Relevés COMBI</div><div class="ps">Laveuse-remplisseuse · compteurs + Head statistics en fin de poste</div></div>
 <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0"><button class="bq" onclick="openScanner()">📷 Scanner</button><button onclick="modalUrgences()" style="background:rgba(248,81,73,.15);border:1px solid rgba(248,81,73,.5);color:${C.danger};font-size:12px;font-weight:800;padding:7px 10px;border-radius:10px;cursor:pointer;font-family:-apple-system,sans-serif">📞 Urgences</button></div>
 </div>
+${pushChecked && !pushOn && pushSupported() ? `<div class="card" style="padding:12px 14px;border-left:3px solid ${C.info};display:flex;gap:10px;align-items:center">
+<div style="flex:1;font-size:12px">🔔 <b>Active les notifications</b> pour recevoir les messages de la maintenance sur ton téléphone.</div>
+<button class="bs" style="flex-shrink:0;color:${C.info}" onclick="enablePush()">Activer</button></div>` : ''}
 ${canReleve()?`
 <div class="card" style="padding:14px;border-left:3px solid ${dejaFait?C.success:C.accent}">
 <div style="font-size:13px;margin-bottom:10px">${dejaFait?`✅ Relevé du poste <b>${rlvPosteCourant()}</b> déjà saisi aujourd'hui.`:`Poste en cours : <b>${rlvPosteCourant()}</b> — relevé à faire en fin de poste.`}</div>
@@ -4785,7 +4790,7 @@ ${hasPin()
 <div style="display:flex;justify-content:space-between;align-items:center">
 <div>
 <div style="font-size:13px;font-weight:600">🔔 Notifications push</div>
-<div style="font-size:11px;color:var(--muted);margin-top:2px">${pushOn ? 'Activées · alerte à chaque nouvel OT' : 'Recevoir une alerte à chaque nouvel OT créé'}</div>
+<div style="font-size:11px;color:var(--muted);margin-top:2px">${currentRole==='operateur' ? (pushOn ? 'Activées · tu reçois les messages de la maintenance' : 'Recevoir les messages de la maintenance sur ton téléphone') : (pushOn ? 'Activées · nouveaux OT et messages' : 'Recevoir une alerte à chaque nouvel OT et message')}</div>
 </div>
 <span style="font-size:18px">${pushOn ? '✅' : '⚪'}</span>
 </div>
@@ -5094,6 +5099,27 @@ setTimeout(checkAnnonce, 300); // message suivant éventuel
 
 const auteurMoi = () => { const me = S.operateurs.find(o => o.id === currentUser?.id); return me ? operateurLabel(me) : (currentUser?.email||''); };
 
+// Notification push sur les téléphones des destinataires (Edge Function notify-message, réservée aux managers)
+const texteNotif = t => (t||'').replace(/\*\*/g,'').replace(/\s+/g,' ').trim().slice(0,160);
+async function notifierPush(userIds, titre, texte) {
+const ids = [...new Set(userIds)].filter(id => id && id !== currentUser?.id);
+if (!cloudEnabled || !ids.length) return;
+try {
+const { data } = await sb.auth.getSession();
+const token = data?.session?.access_token; if (!token) return;
+const r = await fetch(`${SUPABASE_URL}/functions/v1/notify-message`, {
+method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+body: JSON.stringify({ user_ids: ids, title: `📢 ${titre || 'Nouveau message'}`, body: texteNotif(texte) }),
+});
+const res = await r.json().catch(() => ({}));
+if (!r.ok) { alert('Notification non envoyée : ' + (res.error || r.status)); return; }
+const recus = new Set(res.user_ids || []);
+const sans = ids.filter(id => !recus.has(id)).map(id => { const o = S.operateurs.find(x => x.id === id); return o ? operateurLabel(o) : '?'; });
+alert(`🔔 Notification envoyée sur le téléphone de ${recus.size}/${ids.length} personne(s).` + (sans.length ? `\n\nPas de notifications activées (verront le pop-up à l'ouverture de l'appli) :\n${sans.join(', ')}` : ''));
+} catch(e) { alert('Notification non envoyée (connexion)'); }
+}
+const casePush = id => `<label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:700;margin:4px 0 6px;color:${C.info}"><input type="checkbox" id="${id}" checked style="width:18px;height:18px"/>🔔 Envoyer aussi une notification sur les téléphones</label>`;
+
 async function publierAnnonce() {
 const titre = document.getElementById('ann-titre').value.trim();
 const texte = document.getElementById('ann-texte').value.trim();
@@ -5101,8 +5127,10 @@ if (!texte) { alert('Écrivez le message'); return; }
 if (!confirm('Publier cette annonce ? Elle s\'affichera à tout le monde à la prochaine ouverture.')) return;
 const liens = [...document.querySelectorAll('.ann-lien:checked')].map(c => c.value);
 const docs = [...document.querySelectorAll('.ann-doc:checked')].map(c => c.value);
+const push = document.getElementById('ann-push')?.checked;
 await setSetting('annonce', JSON.stringify({ id: uid(), titre, texte, liens, docs, date: new Date().toISOString(), auteur: auteurMoi() }));
 showToast('Annonce publiée', C.success); render();
+if (push) await notifierPush(S.operateurs.map(o => o.id), titre, texte);
 }
 
 async function retirerAnnonce() {
@@ -5122,8 +5150,10 @@ const liens = [...document.querySelectorAll('.annc-lien:checked')].map(c => c.va
 const docs = [...document.querySelectorAll('.annc-doc:checked')].map(c => c.value);
 const a = { id: uid(), titre, texte, liens, docs, dest: { roles, users }, date: new Date().toISOString(), auteur: auteurMoi() };
 if (!confirm(`Envoyer ce message à : ${destLabel(a)} ?`)) return;
+const push = document.getElementById('annc-push')?.checked;
 await setSetting('annonces-ciblees', JSON.stringify([...getCiblees(), a]));
 showToast('Message envoyé', C.success); render();
+if (push) await notifierPush(S.operateurs.filter(o => estDestinataire(a, o.id)).map(o => o.id), titre, texte);
 }
 
 async function retirerAnnonceCiblee(id) {
@@ -5161,6 +5191,7 @@ ${a ? `${apercuHtml(a)}${lectureHtml(membres, m => annonceLue(a, m.id))}
 ${cases('ann-lien', Object.entries(ANNONCE_LIENS), a ? (a.liens||[]) : [])}
 <div style="font-size:12px;color:var(--muted);margin:8px 0 6px">Documents de l'appli à joindre :</div>
 ${docPicker('ann-doc', a ? (a.docs||[]) : [])}
+${casePush('ann-push')}
 <button class="bp" onclick="publierAnnonce()">📢 Publier pour tout le monde</button>
 </div>
 
@@ -5183,6 +5214,7 @@ ${cases('annc-user', membres.map(m => [m.id, `${esc(operateurLabel(m))} <span st
 ${cases('annc-lien', Object.entries(ANNONCE_LIENS))}
 <div style="font-size:12px;color:var(--muted);margin:8px 0 6px">Documents de l'appli à joindre :</div>
 ${docPicker('annc-doc')}
+${casePush('annc-push')}
 <button class="bp" onclick="publierAnnonceCiblee()">✉️ Envoyer aux destinataires choisis</button>
 <div style="font-size:11px;color:var(--muted);margin-top:8px">Les messages ciblés s'ajoutent à l'annonce générale : chacun voit d'abord l'annonce générale, puis ses messages, un par un.</div>
 </div>`;
