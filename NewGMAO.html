@@ -1153,9 +1153,8 @@ const sAc = S.stock.filter(s=>stockSite(s)===STOCK_COND && s.quantite<=s.seuilAl
 const sAb = S.stock.filter(s=>stockSite(s)===STOCK_BRAS && s.quantite<=s.seuilAlerte).length;
 const al = {dashboard:oA+sA+pA,ots:oA,stock:sA-sAc-sAb,stockcond:sAc,stockbras:sAb,preventif:pA};
 
-const tabsVisibles = currentRole==='operateur' ? TABS.filter(t=>['releves','settings'].includes(t.id)) : TABS.filter(t=>!STOCK_PRIV_PAGE[t.id] || canManage());
+const tabsVisibles = TABS.filter(t=>!STOCK_PRIV_PAGE[t.id] || canManage());
 if (STOCK_PRIV_PAGE[S.page] && !canManage()) S.page='dashboard';
-if (currentRole==='operateur' && !['releves','settings'].includes(S.page)) S.page='releves';
 document.getElementById('nav').innerHTML = tabsVisibles.map(t => {
 const a = al[t.id]||0;
 return `<button class="ni ${S.page===t.id?'on':''}" onclick="go('${t.id}')">
@@ -1881,14 +1880,6 @@ if (scanRAF) { cancelAnimationFrame(scanRAF); scanRAF=null; }
 function closeScanner() { stopScanner(); closeModal(); }
 
 function showScanResult(eq) {
-// Opérateur de production : le QR de la laveuse ouvre directement le relevé
-if (currentRole === 'operateur') {
-if (isRlvEq(eq)) { ouvrirReleve(); return; }
-const r0=document.getElementById('scan-res'), s0=document.getElementById('scan-st');
-if (s0) s0.textContent='';
-if (r0) r0.innerHTML=`<div style="background:var(--surface2);border-left:3px solid ${C.warning};border-radius:12px;padding:14px;font-size:13px"><b>${esc(eq.nom)}</b><br><span style="color:var(--muted)">Pas de relevé de fin de poste pour cette machine. Scannez la laveuse-remplisseuse.</span></div>`;
-return;
-}
 // Stats rapides pour cette machine
 const otsM = S.ots.filter(o => o.equipementId === eq.id);
 const otsActifs = otsM.filter(o => !['terminé','annulé'].includes(o.statut)).length;
@@ -2220,8 +2211,7 @@ ${memoTable([
 ['Créer un compte','Authentication → Users → Add user (Auto Confirm coché).'],
 ['Changer un rôle',"SQL Editor : UPDATE profils SET role = '...' WHERE email ILIKE '...';"],
 ['Réinitialiser un mot de passe','Authentication → cliquer sur l\'utilisateur.'],
-['Rôles disponibles','operateur, lecteur, technicien, manager.'],
-['Compte opérateur production',"Créer le compte, puis : UPDATE profils SET role = 'operateur' WHERE email ILIKE '...'; → il ne voit que l'onglet Relevés."],
+['Rôles disponibles','lecteur, technicien, manager.'],
 ])}
 ${title('Fonctions exclusives (dans l\'app)')}
 ${memoTable([
@@ -2269,12 +2259,6 @@ ${memoTable([
 ])}
 <div style="background:rgba(232,151,10,.08);border-left:3px solid ${C.accent};border-radius:8px;padding:10px;font-size:12px;color:var(--muted)">
 <b style="color:var(--text)">Un doute, un blocage ?</b> Contactez Corentin et/ou Pierre. Eux seuls peuvent supprimer des données, modifier le tarif horaire et créer de nouveaux comptes.
-</div>`;
-} else if (currentRole === 'operateur') {
-content = `
-${memoReleve}
-<div style="background:rgba(232,151,10,.08);border-left:3px solid ${C.accent};border-radius:8px;padding:10px;font-size:12px;color:var(--muted)">
-<b style="color:var(--text)">Un défaut qui revient souvent sur la même tête ?</b> Notez-le dans Observations et prévenez la maintenance.
 </div>`;
 } else {
 content = `
@@ -3349,7 +3333,7 @@ const RLV_COMPTEURS = [
 {k:'rempliL1',lb:'Fûts propres L1',u:'fûts'},{k:'defautL1',lb:'Fûts en défaut L1',u:'fûts'},
 {k:'rempliL2',lb:'Fûts propres L2',u:'fûts'},{k:'defautL2',lb:'Fûts en défaut L2',u:'fûts'},
 ];
-const canReleve = () => ['operateur','technicien','manager'].includes(currentRole);
+const canReleve = () => ['technicien','manager'].includes(currentRole);
 const RLV_PROCEDURE = [
 ['1. Ouvrir le relevé','📷 Scanner le QR de la laveuse, ou onglet 📝 Relevés → Saisir le relevé de fin de poste.'],
 ['2. Compteurs','Écran COMBI : Filled kegs (fûts propres) et failed kegs (fûts en défaut), L1 et L2.'],
@@ -4790,7 +4774,7 @@ ${hasPin()
 <div style="display:flex;justify-content:space-between;align-items:center">
 <div>
 <div style="font-size:13px;font-weight:600">🔔 Notifications push</div>
-<div style="font-size:11px;color:var(--muted);margin-top:2px">${currentRole==='operateur' ? (pushOn ? 'Activées · tu reçois les messages de la maintenance' : 'Recevoir les messages de la maintenance sur ton téléphone') : (pushOn ? 'Activées · nouveaux OT et messages' : 'Recevoir une alerte à chaque nouvel OT et message')}</div>
+<div style="font-size:11px;color:var(--muted);margin-top:2px">${pushOn ? 'Activées · nouveaux OT et messages' : 'Recevoir une alerte à chaque nouvel OT et message'}</div>
 </div>
 <span style="font-size:18px">${pushOn ? '✅' : '⚪'}</span>
 </div>
@@ -4996,7 +4980,7 @@ const annonceHtml = t => esc(t||'').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replac
 
 // Annonces ciblées (en plus de l'annonce pour tout le monde)
 // settings : 'annonces-ciblees' = [{id, titre, texte, liens, dest:{roles:[], users:[]}, date, auteur}] ; 'annonce-lu-<annId>-<userId>' = '1'
-const ANN_ROLES = { operateur: 'Opérateurs', technicien: 'Techniciens', manager: 'Managers', lecteur: 'Lecteurs' };
+const ANN_ROLES = { technicien: 'Techniciens', manager: 'Managers', lecteur: 'Lecteurs' };
 const getCiblees = () => { try { const l = JSON.parse(getSetting('annonces-ciblees', '') || '[]'); return Array.isArray(l) ? l : []; } catch(e) { return []; } };
 const roleDe = userId => userId === currentUser?.id ? currentRole : ((S.operateurs.find(o => o.id === userId) || {}).role || 'lecteur');
 const estDestinataire = (a, userId) => ((a.dest?.users)||[]).includes(userId) || ((a.dest?.roles)||[]).includes(roleDe(userId));
