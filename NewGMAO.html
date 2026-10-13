@@ -1448,6 +1448,7 @@ return `
 </div>
 <button onclick="modalUrgences()" style="background:rgba(248,81,73,.15);border:1px solid rgba(248,81,73,.5);color:${C.danger};font-size:13px;font-weight:800;padding:9px 12px;border-radius:10px;cursor:pointer;font-family:-apple-system,sans-serif;white-space:nowrap">📞 Urgences</button>
 </div>
+<button onclick="openScanner()" style="width:100%;display:flex;align-items:center;justify-content:center;gap:10px;background:rgba(232,151,10,.15);border:1px solid rgba(232,151,10,.5);color:${C.accent};font-size:16px;font-weight:800;padding:14px;border-radius:12px;cursor:pointer;font-family:-apple-system,sans-serif;margin-bottom:12px">📷 Scanner une machine</button>
 
 <div class="kg">
 ${kpi(S.eq.length,'Équipements',pannes.length?`${pannes.length} en panne`:'Tous opérationnels',pannes.length?C.danger:C.success,"go('equipements')")}
@@ -1787,6 +1788,12 @@ if (stEl) stEl.innerHTML=`<span style="color:${C.danger}">⚠ API caméra non di
 return;
 }
 
+// Caméra déjà autorisée pendant cette session : on réutilise le même flux (évite que le téléphone redemande l'accès)
+const camLive = scanStream && scanStream.getVideoTracks().some(t => t.readyState === 'live');
+if (camLive) {
+scanStream.getTracks().forEach(t => t.enabled = true);
+} else {
+scanStream = null;
 // Demander la caméra
 try {
 scanStream = await navigator.mediaDevices.getUserMedia({
@@ -1807,6 +1814,7 @@ stEl.innerHTML = `<span style="color:${C.danger}">⚠ Caméra non disponible (${
 }
 }
 return;
+}
 }
 }
 
@@ -1872,10 +1880,16 @@ if (stEl) stEl.innerHTML = `<span style="color:${C.warning}">⚠ Ce n'est pas un
 scanRAF = requestAnimationFrame(() => scanTick(vid, cv));
 }
 
+// Fermeture du scanner : la caméra est mise en veille (piste désactivée, voyant éteint) mais pas libérée,
+// pour que le scan suivant ne redemande pas l'autorisation. releaseCamera() la libère vraiment.
 function stopScanner() {
-if (scanStream) { scanStream.getTracks().forEach(t=>t.stop()); scanStream=null; }
+if (scanStream) scanStream.getTracks().forEach(t => t.enabled = false);
 if (scanRAF) { cancelAnimationFrame(scanRAF); scanRAF=null; }
 }
+function releaseCamera() {
+if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
+}
+window.addEventListener('pagehide', releaseCamera);
 
 function closeScanner() { stopScanner(); closeModal(); }
 
