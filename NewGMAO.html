@@ -919,14 +919,18 @@ const op = S.operateurs.find(o => o.id === uid);
 return op ? operateurLabel(op) : '(inconnu)';
 };
 
-function addMyIndispoModal(id) {
+function addMyIndispoModal(id, pourUserId) {
 const i = id ? S.indispoPerso.find(x => String(x.id) === String(id)) : null;
+const choixPersonne = !i && canManage();
+const membresTri = [...S.operateurs].sort((a,b)=>operateurLabel(a).localeCompare(operateurLabel(b),'fr'));
+const cible = pourUserId || currentUser?.id;
 const qui = i && i.user_id !== currentUser?.id ? ` · ${esc(nomParUserId(i.user_id))}` : '';
 openModal(`
 <div class="mh"></div>
 <div class="mhd"><span class="mt">🗓 ${i ? 'Modifier' : 'Ajouter'} une indisponibilité${qui}</span><button class="mc" onclick="closeModal()">×</button></div>
 <div class="mb">
 <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Congés, formation, absence… Les dates sont visibles par l'équipe dans le calendrier, le motif seulement par les managers.</div>
+${choixPersonne ? `<div class="fi"><label class="fl">Personne *</label><select class="inp" id="mi-user">${membresTri.map(m=>`<option value="${m.id}" ${m.id===cible?'selected':''}>${esc(operateurLabel(m))}${m.id===currentUser?.id?' (moi)':''}</option>`).join('')}</select></div>` : ''}
 <div style="display:flex;gap:8px">
 <div class="fi" style="flex:1"><label class="fl">Du *</label><input class="inp" type="date" id="mi-debut" value="${i ? esc(i.date_debut) : ''}"/></div>
 <div class="fi" style="flex:1"><label class="fl">Au *</label><input class="inp" type="date" id="mi-fin" value="${i ? esc(i.date_fin) : ''}"/></div>
@@ -962,7 +966,8 @@ const motif = document.getElementById('mi-motif')?.value || '';
 if (!debut || !fin) { alert('Renseignez les deux dates.'); return; }
 if (new Date(fin) < new Date(debut)) { alert('La date de fin doit être après le début.'); return; }
 try {
-const { error } = await sb.from('indispos_perso').insert({ user_id: currentUser.id, date_debut: debut, date_fin: fin, motif });
+const userId = document.getElementById('mi-user')?.value || currentUser.id;
+const { error } = await sb.from('indispos_perso').insert({ user_id: userId, date_debut: debut, date_fin: fin, motif });
 if (error) { alert('Erreur : ' + error.message); return; }
 await loadIndispoPerso();
 closeModal();
@@ -4813,7 +4818,7 @@ if (membres.length===0) return `<div style="padding:14px;font-size:12px;color:va
 return membres.map(m=>{
 const list = S.indispoPerso.filter(i=>i.user_id===m.id).sort((a,b)=>new Date(b.date_debut)-new Date(a.date_debut));
 return `
-<div style="padding:8px 14px;background:var(--surface2);font-size:11px;font-weight:700;color:${C.accent};text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border)22">${esc(operateurLabel(m))} <span style="color:var(--muted);font-weight:600;text-transform:none">· ${esc(m.role||'lecteur')}</span></div>
+<div style="padding:8px 14px;background:var(--surface2);font-size:11px;font-weight:700;color:${C.accent};text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border)22;display:flex;justify-content:space-between;align-items:center;gap:8px"><span>${esc(operateurLabel(m))} <span style="color:var(--muted);font-weight:600;text-transform:none">· ${esc(m.role||'lecteur')}</span></span><button onclick="addMyIndispoModal(null,'${m.id}')" style="background:transparent;border:1px solid rgba(232,151,10,.4);color:${C.accent};font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;cursor:pointer;text-transform:none">+ Absence</button></div>
 ${list.length===0
 ? `<div style="padding:10px 14px;border-bottom:1px solid var(--border)22;font-size:12px;color:var(--muted);font-style:italic">Aucune indisponibilité déclarée</div>`
 : list.map(i=>`
