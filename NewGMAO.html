@@ -840,28 +840,6 @@ render();
 } catch(e) { alert("Erreur: " + e.message); }
 }
 
-// Déclenche l'envoi d'une notification push à la création d'un OT (non bloquant)
-async function notifyNewOT(ot) {
-if (!cloudEnabled || !ot) return;
-try {
-const eq = S.eq.find(e => e.id === ot.equipementId);
-const { data } = await sb.auth.getSession();
-const token = data?.session?.access_token;
-if (!token) return;
-await fetch(`${SUPABASE_URL}/functions/v1/notify-ot`, {
-method: 'POST',
-headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-body: JSON.stringify({
-numero: ot.numero || '',
-titre: ot.titre || '',
-machine: eq?.nom || '',
-site: eq?.site || '',
-priorite: ot.priorite || '',
-}),
-});
-} catch(e) { /* silencieux : ne jamais bloquer la création d'un OT */ }
-}
-
 // Charge la liste des comptes (opérateurs) pour les menus déroulants
 async function loadOperateurs() {
 if (!cloudEnabled) { S.operateurs = []; return; }
