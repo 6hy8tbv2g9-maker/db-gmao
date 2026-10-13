@@ -941,23 +941,43 @@ const op = S.operateurs.find(o => o.id === uid);
 return op ? operateurLabel(op) : '(inconnu)';
 };
 
-function addMyIndispoModal() {
+function addMyIndispoModal(id) {
+const i = id ? S.indispoPerso.find(x => String(x.id) === String(id)) : null;
+const qui = i && i.user_id !== currentUser?.id ? ` · ${esc(nomParUserId(i.user_id))}` : '';
 openModal(`
 <div class="mh"></div>
-<div class="mhd"><span class="mt">🗓 Ajouter une indisponibilité</span><button class="mc" onclick="closeModal()">×</button></div>
+<div class="mhd"><span class="mt">🗓 ${i ? 'Modifier' : 'Ajouter'} une indisponibilité${qui}</span><button class="mc" onclick="closeModal()">×</button></div>
 <div class="mb">
-<div style="font-size:12px;color:var(--muted);margin-bottom:12px">Congés, formation, absence… Visible par vous et par les managers.</div>
+<div style="font-size:12px;color:var(--muted);margin-bottom:12px">Congés, formation, absence… Les dates sont visibles par l'équipe dans le calendrier, le motif seulement par les managers.</div>
 <div style="display:flex;gap:8px">
-<div class="fi" style="flex:1"><label class="fl">Du *</label><input class="inp" type="date" id="mi-debut"/></div>
-<div class="fi" style="flex:1"><label class="fl">Au *</label><input class="inp" type="date" id="mi-fin"/></div>
+<div class="fi" style="flex:1"><label class="fl">Du *</label><input class="inp" type="date" id="mi-debut" value="${i ? esc(i.date_debut) : ''}"/></div>
+<div class="fi" style="flex:1"><label class="fl">Au *</label><input class="inp" type="date" id="mi-fin" value="${i ? esc(i.date_fin) : ''}"/></div>
 </div>
-<div class="fi"><label class="fl">Motif</label><input class="inp" id="mi-motif" placeholder="Ex: congés, formation…"/></div>
-<button class="bp" onclick="saveMyIndispo()">Ajouter</button>
+<div class="fi"><label class="fl">Motif</label><input class="inp" id="mi-motif" placeholder="Ex: congés, formation…" value="${i ? esc(i.motif||'') : ''}"/></div>
+<button class="bp" onclick="saveMyIndispo(${i ? `'${i.id}'` : ''})">${i ? 'Enregistrer' : 'Ajouter'}</button>
 </div>
 `);
 }
 
-async function saveMyIndispo() {
+async function saveMyIndispo(id) {
+if (id) {
+const debut = document.getElementById('mi-debut')?.value;
+const fin = document.getElementById('mi-fin')?.value;
+const motif = document.getElementById('mi-motif')?.value || '';
+if (!debut || !fin) { alert('Renseignez les deux dates.'); return; }
+if (new Date(fin) < new Date(debut)) { alert('La date de fin doit être après le début.'); return; }
+try {
+const { data, error } = await sb.from('indispos_perso').update({ date_debut: debut, date_fin: fin, motif }).eq('id', id).select();
+if (error) { alert('Erreur : ' + error.message); return; }
+if (!data || !data.length) { alert("Modification refusée (droits insuffisants)."); return; }
+await loadIndispoPerso();
+closeModal();
+showToast('Indisponibilité modifiée', C.success);
+render();
+recalerPreventifs();
+} catch(e) { alert('Erreur lors de la modification'); }
+return;
+}
 const debut = document.getElementById('mi-debut')?.value;
 const fin = document.getElementById('mi-fin')?.value;
 const motif = document.getElementById('mi-motif')?.value || '';
@@ -4727,18 +4747,19 @@ ${canManage() ? `
 Périodes de fermeture du site. Elles apparaissent dans le calendrier et les préventifs qui tombent pendant ces périodes sont automatiquement décalés au jour ouvré le plus proche.
 </div>
 ${S.indisp.length === 0
-? `<div style="padding:14px;font-size:12px;color:var(--muted);text-align:center;font-style:italic">Aucune indisponibilité enregistrée</div>`
+? `<div style="padding:14px;font-size:12px;color:var(--muted);text-align:center;font-style:italic">Aucune fermeture enregistrée</div>`
 : S.indisp.sort((a,b)=>new Date(b.dateDebut)-new Date(a.dateDebut)).map(i => `
 <div style="padding:12px 14px;border-bottom:1px solid var(--border)22;display:flex;justify-content:space-between;align-items:center;gap:10px">
 <div style="flex:1">
 <div style="font-size:13px;font-weight:600">${fmt(i.dateDebut)} → ${fmt(i.dateFin)}</div>
 <div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(i.motif || 'Indisponible')}</div>
 </div>
+<button onclick="addIndispModal('${i.id}')" style="background:transparent;border:1px solid var(--border);color:var(--muted);font-size:11px;padding:5px 9px;border-radius:6px;cursor:pointer">✏️</button>
 <button onclick="delIndisp('${i.id}')" style="background:transparent;border:1px solid ${C.danger}44;color:${C.danger};font-size:11px;padding:5px 9px;border-radius:6px;cursor:pointer">✕</button>
 </div>
 `).join('')}
 <div style="padding:14px">
-<button class="bs" onclick="addIndispModal()" style="width:100%;background:rgba(232,151,10,.12);border:1px solid rgba(232,151,10,.35);color:${C.accent}">+ Ajouter une indisponibilité</button>
+<button class="bs" onclick="addIndispModal()" style="width:100%;background:rgba(232,151,10,.12);border:1px solid rgba(232,151,10,.35);color:${C.accent}">+ Ajouter une fermeture</button>
 </div>
 </div>
 ` : ''}
@@ -4795,6 +4816,7 @@ return miens.length===0
 <div style="font-size:13px;font-weight:600">${fmt(i.date_debut)} → ${fmt(i.date_fin)}</div>
 <div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(i.motif||'Indisponible')}</div>
 </div>
+<button onclick="addMyIndispoModal('${i.id}')" style="background:transparent;border:1px solid var(--border);color:var(--muted);font-size:11px;padding:5px 9px;border-radius:6px;cursor:pointer">✏️</button>
 <button onclick="delMyIndispo('${i.id}')" style="background:transparent;border:1px solid ${C.danger}44;color:${C.danger};font-size:11px;padding:5px 9px;border-radius:6px;cursor:pointer">✕</button>
 </div>`).join('');
 })()}
@@ -4822,6 +4844,7 @@ ${list.length===0
 <div style="font-size:13px;font-weight:600">${fmt(i.date_debut)} → ${fmt(i.date_fin)}</div>
 <div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(i.motif||'Indisponible')}</div>
 </div>
+<button onclick="addMyIndispoModal('${i.id}')" style="background:transparent;border:1px solid var(--border);color:var(--muted);font-size:11px;padding:5px 9px;border-radius:6px;cursor:pointer">✏️</button>
 <button onclick="delMyIndispo('${i.id}')" style="background:transparent;border:1px solid ${C.danger}44;color:${C.danger};font-size:11px;padding:5px 9px;border-radius:6px;cursor:pointer">✕</button>
 </div>`).join('')}
 `;}).join('');
@@ -4902,33 +4925,34 @@ await setSetting('tarif_horaire', v);
 showToast('Tarif enregistré', C.success);
 }
 
-function addIndispModal() {
+function addIndispModal(id) {
+const f = id ? S.indisp.find(x => x.id === id) : null;
 openModal(`
 <div class="mh"></div>
-<div class="mhd"><span class="mt">Nouvelle indisponibilité</span><button class="mc" onclick="closeModal()">×</button></div>
+<div class="mhd"><span class="mt">${f ? 'Modifier la fermeture' : 'Nouvelle fermeture site'}</span><button class="mc" onclick="closeModal()">×</button></div>
 <div class="mb">
 <div class="g2">
-<div class="fi"><label class="fl">Date début</label><input class="inp" type="date" id="ind-deb" value="${today()}"/></div>
-<div class="fi"><label class="fl">Date fin</label><input class="inp" type="date" id="ind-fin" value="${today()}"/></div>
+<div class="fi"><label class="fl">Date début</label><input class="inp" type="date" id="ind-deb" value="${f ? esc(f.dateDebut) : today()}"/></div>
+<div class="fi"><label class="fl">Date fin</label><input class="inp" type="date" id="ind-fin" value="${f ? esc(f.dateFin) : today()}"/></div>
 </div>
-<div class="fi"><label class="fl">Motif (optionnel)</label><input class="inp" id="ind-motif" placeholder="Vacances, formation…"/></div>
-<button class="bp" onclick="saveIndisp()">Enregistrer</button>
+<div class="fi"><label class="fl">Motif (optionnel)</label><input class="inp" id="ind-motif" placeholder="Vacances, inventaire…" value="${f ? esc(f.motif||'') : ''}"/></div>
+<button class="bp" onclick="saveIndisp(${f ? `'${f.id}'` : ''})">Enregistrer</button>
 </div>
 `);
 }
 
-function saveIndisp() {
+function saveIndisp(id) {
 const dateDebut = document.getElementById('ind-deb').value;
 const dateFin = document.getElementById('ind-fin').value;
 const motif = document.getElementById('ind-motif').value;
 if (!dateDebut || !dateFin) { alert('Dates obligatoires'); return; }
 if (new Date(dateFin) < new Date(dateDebut)) { alert('La date de fin doit être après la date de début'); return; }
-const row = { id: uid(), dateDebut, dateFin, motif };
-S.indisp = [...S.indisp, row];
+const row = id ? { ...S.indisp.find(x => x.id === id), dateDebut, dateFin, motif } : { id: uid(), dateDebut, dateFin, motif };
+S.indisp = id ? S.indisp.map(x => x.id === id ? row : x) : [...S.indisp, row];
 syncSave('indisp', row);
 closeModal();
 render();
-showToast('Indisponibilité ajoutée', C.success);
+showToast(id ? 'Fermeture modifiée' : 'Fermeture ajoutée', C.success);
 recalerPreventifs();
 }
 
