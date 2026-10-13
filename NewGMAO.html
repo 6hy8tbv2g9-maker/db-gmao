@@ -214,16 +214,78 @@ return d === 0 || d === 6;
 }
 
 function isIndispo(date) {
-const t = date.getTime();
-return S.indisp.some(i => {
-const deb = new Date(i.dateDebut).getTime();
-const fin = new Date(i.dateFin).getTime();
-return t >= deb && t <= fin;
-});
+const k = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+return S.indisp.some(i => (i.dateDebut||'').slice(0,10) <= k && k <= (i.dateFin||'').slice(0,10));
 }
 
 function isJourOuvre(date) {
 return !isWeekend(date) && !isFerie(date) && !isIndispo(date);
+}
+
+// ── Disponibilité de l'équipe par secteur (indisponibilités perso) ──
+// Conditionnement : Pierre ET Marina présents · Brasserie : 3 personnes min · Prépa / Salem : 1 personne min
+const REGLES_EQUIPE = {
+Conditionnement: { requis: ['pierre','marina'], min: 2 },
+Brasserie: { min: 3 },
+'Prépa': { min: 1 },
+Salem: { min: 1 },
+};
+const sansAccent = t => (t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const equipeMaintenance = () => (S.operateurs||[]).filter(estOperateur);
+const absencesDuJour = k => (S.indispoPerso||[]).filter(i => i.date_debut <= k && k <= i.date_fin);
+function equipeDuJour(date) {
+const k = typeof date === 'string' ? date : ymd(date);
+const absIds = new Set(absencesDuJour(k).map(i => i.user_id));
+const equipe = equipeMaintenance();
+return { equipe, dispo: equipe.filter(o => !absIds.has(o.id)), absents: equipe.filter(o => absIds.has(o.id)) };
+}
+// Renvoie '' si l'équipe permet la maintenance du secteur ce jour-là, sinon la raison
+function raisonEquipe(date, site) {
+const r = REGLES_EQUIPE[site]; if (!r) return '';
+const { equipe, dispo } = equipeDuJour(date);
+if (!equipe.length) return '';
+for (const prenom of (r.requis||[])) {
+const pers = equipe.find(o => sansAccent(operateurLabel(o)).split(/\s+/).includes(prenom));
+if (pers && !dispo.includes(pers)) return `${operateurLabel(pers)} absent(e)`;
+}
+if (dispo.length < r.min) return `${dispo.length} dispo / ${r.min} requis`;
+return '';
+}
+const jourValide = (date, site) => isJourOuvre(date) && !raisonEquipe(date, site);
+// Jour valide le plus proche (priorité avant), jamais avant minKey (aujourd'hui)
+function jourValideProche(dateStr, site, minKey) {
+const date = new Date(dateStr + 'T12:00:00');
+if (jourValide(date, site)) return dateStr;
+for (let off = 1; off <= 120; off++) {
+const av = new Date(date); av.setDate(av.getDate() - off);
+const ap = new Date(date); ap.setDate(ap.getDate() + off);
+if ((!minKey || ymd(av) >= minKey) && jourValide(av, site)) return ymd(av);
+if (jourValide(ap, site)) return ymd(ap);
+}
+return dateStr;
+}
+const sitePrev = p => S.eq.find(e => e.id === p.equipementId)?.site || '';
+// Décale automatiquement les préventifs à venir qui tombent un jour non valide (fermeture, week-end, férié, équipe insuffisante)
+let recalEnCours = false;
+async function recalerPreventifs(silencieux) {
+if (recalEnCours || !canWrite() || !S.prev?.length) return 0;
+recalEnCours = true;
+const auj = today(); let n = 0;
+try {
+for (const p of S.prev) {
+if (!p.prochaineEcheance || p.prochaineEcheance < auj) continue;
+const site = sitePrev(p);
+const nd = jourValideProche(p.prochaineEcheance, site, auj);
+if (nd !== p.prochaineEcheance) {
+const row = { ...p, prochaineEcheance: nd };
+S.prev = S.prev.map(x => x.id === p.id ? row : x);
+syncSave('prev', row); n++;
+}
+}
+} finally { recalEnCours = false; }
+if (n) { if (!silencieux) showToast(`${n} préventif(s) décalé(s) automatiquement`, C.warning); render(); }
+return n;
 }
 
 // Trouve le jour ouvré le plus proche d'une date (avant ou après, priorité avant en égalité)
@@ -908,6 +970,7 @@ await loadIndispoPerso();
 closeModal();
 showToast('Indisponibilité ajoutée', C.success);
 render();
+recalerPreventifs();
 } catch(e) { alert('Erreur lors de l\'ajout'); }
 }
 
@@ -1341,6 +1404,18 @@ const jourCard = (j, idx) => {
 const isToday = dateKey(j.date) === aujKey;
 const isWE = idx >= 5;
 const total = j.prevs.length + j.ots.length;
+const k = dateKey(j.date);
+// Fermetures site + indisponibilités de l'équipe
+const fermetures = S.indisp.filter(i => i.dateDebut <= k && k <= i.dateFin);
+const absences = absencesDuJour(k).filter(i => equipeMaintenance().some(o => o.id === i.user_id));
+const { equipe, dispo } = equipeDuJour(k);
+const ouvre = !isWE && !isFerie(j.date) && !fermetures.length;
+const bloques = ouvre ? SITES.map(st => [st, raisonEquipe(k, st)]).filter(x => x[1]) : [];
+const infos = `
+${fermetures.map(f => `<div style="font-size:11px;font-weight:700;color:${C.danger};background:rgba(248,81,73,.1);border-radius:6px;padding:6px 8px;margin-bottom:5px">🏭 Fermeture site${f.motif?` · ${esc(f.motif)}`:''}</div>`).join('')}
+${isFerie(j.date) ? `<div style="font-size:11px;font-weight:700;color:${C.warning};margin-bottom:5px">🎉 Jour férié</div>` : ''}
+${absences.length ? `<div style="font-size:11px;color:var(--muted);margin-bottom:5px">🏖 <b style="color:var(--text)">Absents :</b> ${absences.map(i => esc(nomParUserId(i.user_id)) + (canManage() && i.motif ? ` <i>(${esc(i.motif)})</i>` : '')).join(', ')}</div>` : ''}
+${ouvre && equipe.length ? `<div style="font-size:11px;color:var(--muted);margin-bottom:5px">👥 ${dispo.length}/${equipe.length} dispo${bloques.length ? ` · <span style="color:${C.warning};font-weight:700">⛔ ${bloques.map(([st, r]) => `${esc(st)} (${esc(r)})`).join(' · ')}</span>` : ''}</div>` : ''}`;
 return `
 <div class="card" style="margin:0 14px 10px;padding:12px;${isToday?`border-left:3px solid ${C.accent}`:isWE?'opacity:.7':''}">
 <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:${total?10:0}px">
@@ -1350,6 +1425,7 @@ ${isToday?`<span style="font-size:10px;color:${C.accent};margin-left:6px;font-we
 </div>
 <span style="font-size:11px;color:var(--muted)">${total===0?'—':`${total} tâche${total>1?'s':''}`}</span>
 </div>
+${infos}
 ${j.prevs.map(p => {
 const eq = S.eq.find(e=>e.id===p.equipementId);
 return `<div onclick="modalPrev('${p.id}')" style="cursor:pointer;display:flex;gap:8px;align-items:center;padding:8px;background:rgba(63,185,80,.08);border-left:3px solid ${C.success};border-radius:6px;margin-bottom:5px">
@@ -1387,6 +1463,7 @@ return `
 <button class="bs" onclick="S.weekOffset++;render()" style="padding:8px 12px">Suiv. →</button>
 </div>
 ${S.weekOffset===0 ? planningTile('equipe') + planningTile('production') : ''}
+<div style="font-size:11px;color:var(--muted);padding:0 16px 10px">Préventifs décalés automatiquement si : fermeture site, week-end/férié, ou équipe insuffisante (Conditionnement : Pierre + Marina · Brasserie : 3 pers. · Prépa / Salem : 1 pers.)</div>
 ${jours.map(jourCard).join('')}
 <div class="sp"></div>`;
 }
@@ -2197,6 +2274,7 @@ if (alertesStock.length > 0) {
 setTimeout(() => alert(`⚠ Stock insuffisant pour : ${alertesStock.join(', ')}`), 500);
 }
 render();
+recalerPreventifs();
 }
 
 // ═══════════════════════════════════
@@ -3079,6 +3157,7 @@ syncSave('prev', updated);
 closeModal();
 showToast('Préventif validé ✓', C.success);
 render();
+recalerPreventifs();
 }
 
 // Coche/décoche toutes les machines d'un site dans la modale de gamme préventive
@@ -3308,7 +3387,7 @@ if (id) {
 const row = {...S.prev.find(p=>p.id===id), ...base, equipementId:document.getElementById('peq').value};
 S.prev = S.prev.map(p=>p.id===id?row:p);
 syncSave('prev', row);
-closeModal(); render();
+closeModal(); render(); recalerPreventifs();
 return;
 }
 
@@ -3324,6 +3403,7 @@ syncSave('prev', row);
 closeModal();
 showToast(`${checked.length} gamme(s) créée(s)`, C.success);
 render();
+recalerPreventifs();
 }
 
 function delPrev(id) {
@@ -4644,7 +4724,7 @@ ${canManage() ? `
 <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:18px 14px 8px">📅 FERMETURES SITE (décalent les préventifs)</div>
 <div class="card">
 <div style="padding:14px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border)22">
-Périodes d'absence (vacances, formations…). Les préventifs qui tombent pendant ces périodes sont automatiquement décalés au jour ouvré le plus proche.
+Périodes de fermeture du site. Elles apparaissent dans le calendrier et les préventifs qui tombent pendant ces périodes sont automatiquement décalés au jour ouvré le plus proche.
 </div>
 ${S.indisp.length === 0
 ? `<div style="padding:14px;font-size:12px;color:var(--muted);text-align:center;font-style:italic">Aucune indisponibilité enregistrée</div>`
@@ -4849,6 +4929,7 @@ syncSave('indisp', row);
 closeModal();
 render();
 showToast('Indisponibilité ajoutée', C.success);
+recalerPreventifs();
 }
 
 function delIndisp(id) {
@@ -4948,6 +5029,7 @@ saveAll();
 S.loading = false;
 subscribeAll();
 showToast('Cloud connecté', '#3fb950');
+setTimeout(() => recalerPreventifs(), 1500);
 } else {
 S.eq = lsLoad('gmao-eq', []);
 S.ots = lsLoad('gmao-ot', []);
