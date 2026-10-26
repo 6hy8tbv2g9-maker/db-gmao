@@ -3643,36 +3643,18 @@ syncDelete('releves', id); closeModal(); render();
 // ═══════════════════════════════════
 // CONTACTS D'URGENCE MAINTENANCE (document « Contacts d'urgence MAINTENANCE » — Version 3, modifié le 09/10/26)
 // ═══════════════════════════════════
-const URGENCES_VERSION = 'Version 3 · modifié le 09/10/26';
-const URGENCES = [
-{ cat:'Équipements', soc:'Anton Paar', objet:'Densimètre et CBox QC', contacts:[{nom:'Elodie Castro', tels:['01 69 18 11 87'], mail:'elodie.castro@anton-paar.com'}] },
-{ cat:'Équipements', soc:'GEA', objet:'Centrifugeuses', contacts:[{nom:'Nabil Sekkal', tels:['+33 3 23 84 81 16'], mail:'nabil.sekkal@gea.com'}] },
-{ cat:'Équipements', soc:'Cheops', objet:'Laveuse remplisseuse', contacts:[
- {nom:'Rotislav — Automatisme', tels:['+420 730 680 387'], wa:true, note:'Via WhatsApp, en anglais'},
- {nom:'Frantisek Simon — Commande de pièces', tels:['+420 727 883 594'], mail:'simon@cheops-chotebor.cz', note:'En anglais'}] },
-{ cat:'Équipements', soc:'Agrometal', objet:'Salle à brasser Salem', contacts:[
- {nom:'Volodymyr — Représentant', tels:['07 49 71 02 19','07 57 69 10 21'], mail:'beer@agrometal.info', note:'Parle français'},
- {nom:'Zoltan — Automatisme', tels:['+36 70 299 6954'], wa:true, note:'Via WhatsApp'}] },
-{ cat:'Équipements', soc:'Wild Goose', objet:'Encanneuse', contacts:[
- {nom:'Quentin', tels:['00 34 625 31 28 75'], wa:true, note:'Via WhatsApp, parle français'},
- {nom:'Gabriele Tomasi', tels:['00 39 347 56 74 646'], mail:'gtomasi@wildgoosefilling.com'}] },
-{ cat:'Équipements', soc:'Cometi', objet:'Chaudière', contacts:[{nom:'Astreinte 24/7', tels:['0800942526']}] },
-{ cat:'Équipements', soc:'Chalvignac', objet:'Groupe froid, réseau de glycol', contacts:[{nom:'Bruno Maugis', tels:['06 59 23 38 78'], mail:'SAVFroid@chalvignac.com'}] },
-{ cat:'Équipements', soc:'Mécatechnique', objet:'Mondo, CIMEC, étiqueteuse, convoyeurs…', contacts:[{nom:'Alexandre Barros', tels:['06 07 36 65 31'], mail:'a.barros@mecatechniqueindutrie.fr'}] },
-{ cat:'Intervenants extérieurs', soc:'GDV Bobinage', objet:'Pompes (réparations)', contacts:[{nom:'Standard', tels:['05 45 95 91 08']}] },
-{ cat:'Intervenants extérieurs', soc:'CVBF', objet:'Pompes et équipement de brasserie', contacts:[{nom:'David Leonhard', tels:['07 78 72 60 65'], mail:'cvbf.leonhard@orange.fr'}] },
-{ cat:'Intervenants extérieurs', soc:'Sylvain Longue Naud', objet:'Chaudronnerie', contacts:[{nom:'Sylvain', tels:['06 74 48 15 43'], mail:'sylvain.longue123@free.fr'}] },
-{ cat:'Intervenants extérieurs', soc:'SEFI', objet:'Joints, etc.', contacts:[{nom:'Se déplacer', adresse:"141 Bd Salvador Allende, 16340 L'Isle-d'Espagnac"}] },
-{ cat:'Intervenants extérieurs', soc:'Mécaplus', objet:'Réparations urgentes', contacts:[{nom:'Se déplacer', adresse:"35 Bd Salvador Allende, 16340 L'Isle-d'Espagnac"}] },
-{ cat:'Intervenants extérieurs', soc:'T.2.M.', objet:'Réparations urgentes', contacts:[{nom:'Thibaut Martin', tels:['06 68 49 69 13'], mail:'tmartin.t2m@gmail.com'}] },
-];
+// Les contacts sont stockés dans la base (réglage « urgences »), protégés par la connexion.
+const getUrgences = () => { try { const v = JSON.parse(getSetting('urgences','[]')); return Array.isArray(v) ? v : []; } catch(e) { return []; } };
+const urgencesMaj = () => { const d = getSetting('urgences-maj',''); return d ? 'Mis à jour le ' + new Date(d).toLocaleDateString('fr-FR') : ''; };
+const URG_CATS = ['Équipements','Intervenants extérieurs'];
 const telHref = t => { let n = t.replace(/[^\d+]/g,''); if (n.startsWith('00')) n = '+' + n.slice(2); return n; };
 const waHref = t => 'https://wa.me/' + telHref(t).replace(/^\+/,'').replace(/^0/,'33');
 const btnLien = (href, txt, col, ext) => `<a href="${href}" ${ext?'target="_blank" rel="noopener"':''} style="display:inline-flex;align-items:center;gap:5px;padding:7px 10px;border-radius:8px;font-size:12px;font-weight:700;text-decoration:none;border:1px solid ${col}55;background:${col}18;color:${col};margin:4px 6px 0 0">${txt}</a>`;
 
 function modalUrgences(q) {
 q = (q||'').toLowerCase();
-const liste = URGENCES.filter(u => !q || JSON.stringify(u).toLowerCase().includes(q));
+const toutes = getUrgences();
+const liste = toutes.filter(u => !q || JSON.stringify(u).toLowerCase().includes(q));
 const cats = [...new Set(liste.map(u => u.cat))];
 const bloc = u => `<div style="padding:10px 0;border-bottom:1px solid var(--border)22">
 <div style="font-size:14px;font-weight:800">${esc(u.soc)} <span style="font-size:12px;font-weight:600;color:var(--muted)">· ${esc(u.objet)}</span></div>
@@ -3682,7 +3664,8 @@ ${u.contacts.map(c => `<div style="margin-top:6px">
 </div>`).join('')}
 </div>`;
 const html = `${cats.map(cat => `<div style="font-size:11px;color:${C.accent};text-transform:uppercase;letter-spacing:.07em;font-weight:800;margin:12px 0 2px">${esc(cat)}</div>${liste.filter(u=>u.cat===cat).map(bloc).join('')}`).join('') || `<div style="color:var(--muted);font-size:13px;padding:10px 0">Aucun contact trouvé</div>`}
-<div style="font-size:10px;color:var(--muted);margin-top:12px">${URGENCES_VERSION}</div>`;
+<div style="font-size:10px;color:var(--muted);margin-top:12px">${toutes.length} société(s) · ${esc(urgencesMaj())}</div>
+${canManage()?`<button class="bs" style="width:100%;margin-top:10px" onclick="urgGerer()">✏️ Gérer les contacts</button>`:''}`;
 if (document.getElementById('urg-liste')) { document.getElementById('urg-liste').innerHTML = html; return; }
 openModal(`<div class="mh"></div>
 <div class="mhd"><span class="mt">📞 Contacts d'urgence maintenance</span><button class="mc" onclick="closeModal()">×</button></div>
@@ -3690,6 +3673,91 @@ openModal(`<div class="mh"></div>
 <input class="inp" placeholder="Rechercher (machine, société, nom…)" oninput="modalUrgences(this.value)" style="margin-bottom:4px"/>
 <div id="urg-liste">${html}</div>
 </div>`);
+}
+
+// ── Gestion des contacts d'urgence (managers) ──
+const urgSave = async (liste) => {
+await setSetting('urgences', JSON.stringify(liste));
+await setSetting('urgences-maj', new Date().toISOString());
+};
+function urgGerer() {
+const l = getUrgences();
+openModal(`<div class="mh"></div>
+<div class="mhd"><span class="mt">✏️ Gérer les contacts d'urgence</span><button class="mc" onclick="closeModal()">×</button></div>
+<div class="mb">
+<button class="bs" style="width:100%;margin-bottom:10px" onclick="modalUrgences()">← Retour aux contacts</button>
+${l.map((u,idx)=>`<div style="display:flex;gap:8px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)22">
+<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700">${esc(u.soc)}</div>
+<div style="font-size:11px;color:var(--muted)">${esc(u.cat)} · ${esc(u.objet||'')} · ${(u.contacts||[]).length} contact(s)</div></div>
+<button onclick="urgEdit(${idx})" style="background:transparent;border:1px solid var(--border);color:var(--muted);font-size:11px;padding:5px 9px;border-radius:6px;cursor:pointer">✏️</button>
+<button onclick="urgDel(${idx})" style="background:transparent;border:1px solid ${C.danger}44;color:${C.danger};font-size:11px;padding:5px 9px;border-radius:6px;cursor:pointer">✕</button>
+</div>`).join('') || `<div style="color:var(--muted);font-size:13px;padding:10px 0">Aucun contact enregistré</div>`}
+<button class="bp" onclick="urgEdit(-1)">+ Ajouter une société</button>
+</div>`);
+}
+async function urgDel(idx) {
+const l = getUrgences(); const u = l[idx]; if (!u) return;
+if (!confirm(`Supprimer « ${u.soc} » et ses contacts ?`)) return;
+l.splice(idx,1); await urgSave(l); showToast('Supprimé', C.success); urgGerer();
+}
+const urgChamp = (lb, cls, val, ph='') => `<div class="fi"><label class="fl">${lb}</label><input class="inp ${cls}" value="${esc(val||'')}" placeholder="${ph}"/></div>`;
+function urgContactsHtml() {
+return (window._urgC||[]).map((c,i)=>`<div style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:10px" data-uc="${i}">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+<span style="font-size:11px;font-weight:700;color:${C.accent}">CONTACT ${i+1}</span>
+<button onclick="urgContactDel(${i})" style="background:transparent;border:1px solid ${C.danger}44;color:${C.danger};font-size:11px;padding:3px 8px;border-radius:6px;cursor:pointer">✕</button></div>
+${urgChamp('Nom','uc-nom',c.nom)}
+${urgChamp('Téléphones (séparés par une virgule)','uc-tels',(c.tels||[]).join(', '),'06 12 34 56 78, 05 45 ...')}
+${urgChamp('E-mail','uc-mail',c.mail)}
+${urgChamp('Adresse (si déplacement)','uc-adr',c.adresse)}
+${urgChamp('Note','uc-note',c.note,'Parle français, via WhatsApp…')}
+<label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" class="uc-wa" ${c.wa?'checked':''} style="width:18px;height:18px"/>Joignable via WhatsApp</label>
+</div>`).join('');
+}
+function urgHarvest() {
+window._urgC = [...document.querySelectorAll('[data-uc]')].map(d => {
+const v = c => d.querySelector('.'+c)?.value.trim() || '';
+const o = { nom: v('uc-nom'), tels: v('uc-tels').split(',').map(x=>x.trim()).filter(Boolean) };
+if (v('uc-mail')) o.mail = v('uc-mail');
+if (v('uc-adr')) o.adresse = v('uc-adr');
+if (v('uc-note')) o.note = v('uc-note');
+if (d.querySelector('.uc-wa')?.checked) o.wa = true;
+return o;
+});
+return window._urgC;
+}
+function urgContactAdd() { urgHarvest(); window._urgC.push({nom:'',tels:[]}); document.getElementById('urg-contacts').innerHTML = urgContactsHtml(); }
+function urgContactDel(i) { urgHarvest(); window._urgC.splice(i,1); document.getElementById('urg-contacts').innerHTML = urgContactsHtml(); }
+function urgEdit(idx) {
+const l = getUrgences();
+const u = idx >= 0 ? l[idx] : { cat: URG_CATS[0], soc:'', objet:'', contacts:[{nom:'',tels:[]}] };
+window._urgC = JSON.parse(JSON.stringify(u.contacts || [{nom:'',tels:[]}]));
+openModal(`<div class="mh"></div>
+<div class="mhd"><span class="mt">${idx>=0?'Modifier':'Ajouter'} une société</span><button class="mc" onclick="closeModal()">×</button></div>
+<div class="mb">
+<div class="fi"><label class="fl">Catégorie</label><select class="inp" id="urg-cat">${URG_CATS.map(c=>`<option ${u.cat===c?'selected':''}>${c}</option>`).join('')}</select></div>
+${urgChamp('Société *','urg-soc-i',u.soc)}
+${urgChamp('Objet (machine, prestation…)','urg-objet-i',u.objet,'Laveuse remplisseuse')}
+<div style="font-size:12px;color:var(--muted);margin:10px 0 6px">Contacts :</div>
+<div id="urg-contacts">${urgContactsHtml()}</div>
+<button class="bs" style="width:100%;margin-bottom:10px" onclick="urgContactAdd()">+ Ajouter un contact</button>
+<button class="bp" onclick="urgSaveForm(${idx})">Enregistrer</button>
+</div>`);
+// identifiants uniques pour les deux champs texte principaux
+const si = document.querySelector('.urg-soc-i'); if (si) si.id = 'urg-soc';
+const oi = document.querySelector('.urg-objet-i'); if (oi) oi.id = 'urg-objet';
+}
+async function urgSaveForm(idx) {
+const soc = document.getElementById('urg-soc')?.value.trim();
+if (!soc) { alert('Le nom de la société est obligatoire.'); return; }
+const contacts = urgHarvest().filter(c => c.nom || (c.tels||[]).length || c.mail || c.adresse);
+if (!contacts.length) { alert('Ajoutez au moins un contact.'); return; }
+const row = { cat: document.getElementById('urg-cat').value, soc, objet: document.getElementById('urg-objet')?.value.trim() || '', contacts };
+const l = getUrgences();
+if (idx >= 0) l[idx] = row; else l.push(row);
+await urgSave(l);
+showToast('Contacts enregistrés', C.success);
+urgGerer();
 }
 
 // ═══════════════════════════════════
