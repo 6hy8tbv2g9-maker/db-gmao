@@ -1973,7 +1973,12 @@ if (window.ZXing || window._zxingLoading) return;
 window._zxingLoading = true;
 const sc = document.createElement('script');
 sc.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
-sc.onload = () => { try { window._zxing = new window.ZXing.BrowserMultiFormatReader(); } catch(e) {} };
+sc.onload = () => { try {
+const Z = window.ZXing, h = new Map();
+h.set(Z.DecodeHintType.TRY_HARDER, true);
+h.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A, Z.BarcodeFormat.UPC_E, Z.BarcodeFormat.CODE_128, Z.BarcodeFormat.CODE_39, Z.BarcodeFormat.ITF, Z.BarcodeFormat.QR_CODE, Z.BarcodeFormat.DATA_MATRIX]);
+const r = new Z.MultiFormatReader(); r.setHints(h); window._zxing = r;
+} catch(e) {} };
 document.head.appendChild(sc);
 }
 async function decodeMulti(cv, img) {
@@ -1983,7 +1988,7 @@ _bcDetector = new window.BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','u
 }
 if (_bcDetector) { const r = await _bcDetector.detect(cv); if (r && r.length && r[0].rawValue) return r[0].rawValue; }
 } catch(e) {}
-try { if (window._zxing) { const r = window._zxing.decodeFromCanvas(cv); if (r) return r.getText(); } } catch(e) {}
+try { if (window._zxing) { const Z = window.ZXing; const r = window._zxing.decode(new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(cv)))); if (r) return r.getText(); } } catch(e) {}
 try { const c = window.jsQR && window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' }); if (c && c.data) return c.data; } catch(e) {}
 return null;
 }
@@ -3886,7 +3891,8 @@ ${canWrite()?`<button class="fab" onclick="modalSt(null)">+</button>`:""}`;
 // SCAN D'UNE PIÈCE : entrée / sortie de stock
 // ═══════════════════════════════════
 const norm = v => String(v||'').trim().toLowerCase();
-const stockParCode = code => S.stock.find(s => norm(s.codeBarre) && norm(s.codeBarre) === norm(code))
+const codesDe = s => String(s.codeBarre||'').split(/[,;|\n]+/).map(norm).filter(Boolean);
+const stockParCode = code => S.stock.find(s => codesDe(s).includes(norm(code)))
   || S.stock.find(s => norm(s.reference) && norm(s.reference) === norm(code));
 function openScannerStock() { openScanner('stock'); }
 
@@ -3914,7 +3920,7 @@ openModal(`<div class="mh"></div>
 <button class="bs" style="flex:1;padding:14px;font-size:15px;font-weight:800;background:rgba(248,81,73,.15);border:1px solid rgba(248,81,73,.5);color:${C.danger}" onclick="mouvement('${s.id}',-1)">− Sortie</button>
 <button class="bs" style="flex:1;padding:14px;font-size:15px;font-weight:800;background:rgba(63,185,80,.15);border:1px solid rgba(63,185,80,.5);color:${C.success}" onclick="mouvement('${s.id}',1)">+ Entrée</button>
 </div>
-${code && !norm(s.codeBarre) ? `<button class="bs" style="width:100%;margin-bottom:10px;font-size:12px" onclick="associerCode('${s.id}','${esc(code)}')">🔗 Mémoriser le code ${esc(code)} pour cette pièce</button>` : ''}
+${code && !codesDe(s).includes(norm(code)) ? `<button class="bs" style="width:100%;margin-bottom:10px;font-size:12px" onclick="associerCode('${s.id}','${esc(code)}')">🔗 ${norm(s.codeBarre)?'Ajouter':'Mémoriser'} le code ${esc(code)} pour cette pièce</button>` : ''}
 <button class="bs" style="width:100%" onclick="openScannerStock()">📷 Scanner une autre pièce</button>
 </div>`);
 }
@@ -3932,7 +3938,8 @@ render(); modalMouvement(id);
 
 async function associerCode(id, code) {
 const s = S.stock.find(x => x.id === id); if (!s) return;
-const updated = { ...s, codeBarre: code };
+const deja = codesDe(s).includes(norm(code));
+const updated = { ...s, codeBarre: deja ? s.codeBarre : (norm(s.codeBarre) ? String(s.codeBarre).trim() + ', ' + code : code) };
 S.stock = S.stock.map(x => x.id === id ? updated : x);
 syncSave('stock', updated);
 showToast('Code mémorisé', C.success);
@@ -3997,7 +4004,7 @@ openModal(`
 <div class="fi"><label class="fl">Seuil min.</label><input class="inp" type="number" min="0" inputmode="numeric" id="ss" value="${f.seuilAlerte}"/></div>
 <div class="fi"><label class="fl">PU (€)</label><input class="inp" type="number" min="0" step="0.01" id="sp" value="${f.prixUnitaire}"/></div>
 </div>
-<div class="fi"><label class="fl">Code-barres / QR</label><input class="inp" id="scb" value="${esc(f.codeBarre||'')}" placeholder="Scannez-le depuis la page Stock"/></div>
+<div class="fi"><label class="fl">Code-barres / QR (plusieurs possibles, séparés par une virgule)</label><input class="inp" id="scb" value="${esc(f.codeBarre||'')}" placeholder="Scannez-le depuis la page Stock"/></div>
 <div class="fi"><label class="fl">Observations</label><textarea class="ta" id="so">${esc(f.observations)}</textarea></div>
 ${(!isN && canDelete())?`<button class="bd" onclick="delSt('${s.id}')">Supprimer cette pièce</button>`:''}
 ${canWrite()?`<button class="bp" onclick="saveSt('${isN?'':s.id}')">${isN?'Ajouter au stock':'Enregistrer'}</button>`:''}
