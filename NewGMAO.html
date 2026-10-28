@@ -1943,6 +1943,7 @@ const img = ctx.getImageData(0, 0, cv.width, cv.height);
 let code = window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' });
 
 if (code && code.data) {
+if (code.data.startsWith(GRP_PFX)) { stopScanner(); modalGroupe(code.data.slice(GRP_PFX.length)); return; }
 const eqId = parseQR(code.data);
 if (eqId) {
 const eq = S.eq.find(e => e.id === eqId);
@@ -3866,6 +3867,7 @@ return `
 </div>
 ${siteForce?`<div style="display:flex;gap:8px;align-items:center;padding:4px 2px 10px;font-size:11px;color:var(--muted)"><span style="flex:1">🔒 Visible uniquement par les managers</span><button class="bs" style="padding:6px 10px;font-size:12px" onclick="generateStockReport(false,'${site}')">📄 PDF</button><button class="bs" style="padding:6px 10px;font-size:12px" onclick="generateStockReport(true,'${site}')">⚠ PDF alertes</button></div>`:`<div style="display:flex;gap:8px;padding:4px 2px 10px">${siteTabs}</div>`}
 ${canWrite()?`<button onclick="openScannerStock()" style="width:100%;display:flex;align-items:center;justify-content:center;gap:10px;background:rgba(232,151,10,.15);border:1px solid rgba(232,151,10,.5);color:${C.accent};font-size:15px;font-weight:800;padding:13px;border-radius:12px;cursor:pointer;font-family:-apple-system,sans-serif;margin-bottom:10px">📷 Scanner une pièce (entrée / sortie)</button>`:''}
+${canWrite()?`<button class="bs" style="width:100%;margin-bottom:10px" onclick="grpListe()">🗂 Groupes de pièces (${getGroupes().length})</button>`:''}
 <div class="sc"><input id="st-search" class="si" placeholder="Rechercher…" value="${esc(S.search.stock)}" oninput="S.search.stock=this.value;render()"/></div>
 ${list.length===0?`<div class="empty"><div class="empty-i">📦</div><div>Aucune pièce en stock ${stockSiteLbl(site)}</div></div>`:`
 ${alertes.length?`
@@ -3897,6 +3899,8 @@ const stockParCode = code => S.stock.find(s => codesDe(s).includes(norm(code)))
 function openScannerStock() { openScanner('stock'); }
 
 function stockScanCode(code) {
+if (String(code).startsWith(GRP_PFX)) { modalGroupe(String(code).slice(GRP_PFX.length)); return; }
+window._grpCourant = null;
 const item = stockParCode(code);
 if (item) modalMouvement(item.id, code); else modalCodeInconnu(code);
 }
@@ -3921,6 +3925,7 @@ openModal(`<div class="mh"></div>
 <button class="bs" style="flex:1;padding:14px;font-size:15px;font-weight:800;background:rgba(63,185,80,.15);border:1px solid rgba(63,185,80,.5);color:${C.success}" onclick="mouvement('${s.id}',1)">+ Entrée</button>
 </div>
 ${code && !codesDe(s).includes(norm(code)) ? `<button class="bs" style="width:100%;margin-bottom:10px;font-size:12px" onclick="associerCode('${s.id}','${esc(code)}')">🔗 ${norm(s.codeBarre)?'Ajouter':'Mémoriser'} le code ${esc(code)} pour cette pièce</button>` : ''}
+${window._grpCourant && getGroupes().some(g=>g.id===window._grpCourant) ? `<button class="bs" style="width:100%;margin-bottom:10px" onclick="modalGroupe('${window._grpCourant}')">← Retour au groupe « ${esc(getGroupes().find(g=>g.id===window._grpCourant).nom)} »</button>` : ''}
 <button class="bs" style="width:100%" onclick="openScannerStock()">📷 Scanner une autre pièce</button>
 </div>`);
 }
@@ -3962,6 +3967,126 @@ ${pieceSearchWidget('ci-piece', dispo, null, stockSitePublic(S.stockSite))}
 <button class="bs" style="width:100%" onclick="closeModal();modalSt(null,'${esc(code)}')">+ Créer une nouvelle pièce avec ce code</button>
 <button class="bs" style="width:100%;margin-top:10px" onclick="openScannerStock()">📷 Scanner un autre code</button>
 </div>`);
+}
+
+// ═══════════════════════════════════
+// GROUPES DE PIÈCES (ex. « Roulements ») avec QR code
+// ═══════════════════════════════════
+const GRP_PFX = 'GMAO|grp|';
+const getGroupes = () => { try { const v = JSON.parse(getSetting('stock-groupes','[]')); return Array.isArray(v) ? v : []; } catch(e) { return []; } };
+const saveGroupes = l => setSetting('stock-groupes', JSON.stringify(l));
+const grpQrUrl = (g, sz=240) => `https://api.qrserver.com/v1/create-qr-code/?size=${sz}x${sz}&bgcolor=ffffff&color=0d1117&qzone=1&data=${encodeURIComponent(GRP_PFX+g.id)}`;
+const grpPieces = g => (g.ids||[]).map(id => S.stock.find(s => s.id === id)).filter(s => s && (canManage() || !STOCK_PRIV.includes(stockSite(s))));
+
+function grpListe() {
+const l = getGroupes();
+openModal(`<div class="mh"></div>
+<div class="mhd"><span class="mt">🗂 Groupes de pièces</span><button class="mc" onclick="closeModal()">×</button></div>
+<div class="mb">
+${l.map(g=>`<div style="display:flex;gap:8px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)22">
+<div style="flex:1;min-width:0;cursor:pointer" onclick="modalGroupe('${g.id}')"><div style="font-size:14px;font-weight:700">${esc(g.nom)}</div>
+<div style="font-size:11px;color:var(--muted)">${grpPieces(g).length} pièce(s)</div></div>
+${canManage()?`<button onclick="grpEdit('${g.id}')" style="background:transparent;border:1px solid var(--border);color:var(--muted);font-size:11px;padding:5px 9px;border-radius:6px;cursor:pointer">✏️</button>`:''}
+</div>`).join('') || `<div style="color:var(--muted);font-size:13px;padding:10px 0">Aucun groupe pour l'instant</div>`}
+${canManage()?`<button class="bp" style="margin-top:14px" onclick="grpEdit(null)">+ Nouveau groupe</button>
+${l.length?`<button class="bs" style="width:100%;margin-top:10px" onclick="grpImprimer()">🖨 Imprimer les QR codes</button>`:''}`:''}
+</div>`);
+}
+
+function modalGroupe(gid) {
+const g = getGroupes().find(x => x.id === gid);
+if (!g) { alert('Groupe introuvable'); return; }
+window._grpCourant = gid;
+const q = norm(window._grpQ || '');
+const ps = grpPieces(g).filter(s => !q || norm(s.designation+' '+s.reference+' '+s.localisation).includes(q));
+openModal(`<div class="mh"></div>
+<div class="mhd"><span class="mt">🗂 ${esc(g.nom)}</span><button class="mc" onclick="closeModal()">×</button></div>
+<div class="mb">
+<input class="inp" id="grp-q" placeholder="Rechercher dans le groupe…" value="${esc(window._grpQ||'')}" oninput="window._grpQ=this.value;grpFiltreListe('${gid}')" style="margin-bottom:10px"/>
+<div id="grp-liste">${grpListeHtml(ps)}</div>
+<button class="bs" style="width:100%;margin-top:12px" onclick="openScannerStock()">📷 Scanner une autre pièce</button>
+</div>`);
+}
+function grpListeHtml(ps) {
+return ps.map(s=>{ const al = s.quantite <= s.seuilAlerte; return `<div onclick="modalMouvement('${s.id}')" style="display:flex;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid var(--border)22;cursor:pointer">
+<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700">${esc(s.designation)}</div>
+<div style="font-size:11px;color:var(--muted)"><span class="mono">${esc(s.reference||'sans réf.')}</span> · ${esc(s.localisation||'emplacement ?')}</div></div>
+<div style="font-size:20px;font-weight:800;font-family:monospace;color:${al?C.warning:C.success}">${s.quantite}</div></div>`; }).join('') || `<div style="color:var(--muted);font-size:13px;padding:10px 0">Aucune pièce</div>`;
+}
+function grpFiltreListe(gid) {
+const g = getGroupes().find(x => x.id === gid); if (!g) return;
+const q = norm(window._grpQ || '');
+document.getElementById('grp-liste').innerHTML = grpListeHtml(grpPieces(g).filter(s => !q || norm(s.designation+' '+s.reference+' '+s.localisation).includes(q)));
+}
+
+function grpEdit(gid) {
+if (!canManage()) return;
+const g = gid ? getGroupes().find(x => x.id === gid) : null;
+window._grpEd = { id: g ? g.id : null, sel: new Set(g ? g.ids : []) };
+openModal(`<div class="mh"></div>
+<div class="mhd"><span class="mt">${g?'Modifier':'Nouveau'} groupe</span><button class="mc" onclick="closeModal()">×</button></div>
+<div class="mb">
+<div class="fi"><label class="fl">Nom du groupe *</label><input class="inp" id="grp-nom" value="${esc(g?g.nom:'')}" placeholder="Roulements"/></div>
+<div class="fi"><label class="fl">Pièces du groupe</label><input class="inp" id="grp-f" placeholder="Filtrer la liste…" oninput="grpFiltre()"/></div>
+<div id="grp-pieces" style="max-height:38vh;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:4px 10px;margin-bottom:12px"></div>
+<div id="grp-n" style="font-size:11px;color:var(--muted);margin-bottom:10px"></div>
+<button class="bp" onclick="grpSave()">Enregistrer</button>
+${g?`<button class="bs" style="width:100%;margin-top:10px" onclick="grpQrFiche('${g.id}')">🖨 Voir / imprimer le QR</button>
+<button class="bs" style="width:100%;margin-top:10px;color:${C.danger};border-color:${C.danger}44" onclick="grpDel('${g.id}')">Supprimer le groupe</button>`:''}
+</div>`);
+grpFiltre();
+}
+function grpFiltre() {
+const q = norm(document.getElementById('grp-f')?.value || '');
+const ed = window._grpEd;
+const tout = S.stock.filter(s => canManage() || !STOCK_PRIV.includes(stockSite(s)));
+const l = tout.filter(s => ed.sel.has(s.id) || !q || norm(s.designation+' '+s.reference+' '+s.categorie).includes(q))
+  .sort((a,b) => (ed.sel.has(b.id)?1:0) - (ed.sel.has(a.id)?1:0) || a.designation.localeCompare(b.designation));
+document.getElementById('grp-pieces').innerHTML = l.slice(0,200).map(s => `<label style="display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)22;font-size:13px">
+<input type="checkbox" ${ed.sel.has(s.id)?'checked':''} onchange="grpToggle('${s.id}',this.checked)" style="width:18px;height:18px;flex-shrink:0"/>
+<span style="flex:1;min-width:0">${esc(s.designation)} <span class="mono" style="color:var(--muted);font-size:11px">${esc(s.reference||'')}</span></span></label>`).join('') || '<div style="color:var(--muted);font-size:13px;padding:8px 0">Aucune pièce</div>';
+document.getElementById('grp-n').textContent = ed.sel.size + ' pièce(s) sélectionnée(s)' + (l.length>200?' · affinez le filtre pour en voir plus':'');
+}
+function grpToggle(id, on) { const ed = window._grpEd; if (on) ed.sel.add(id); else ed.sel.delete(id); const n = document.getElementById('grp-n'); if (n) n.textContent = ed.sel.size + ' pièce(s) sélectionnée(s)'; }
+async function grpSave() {
+const nom = document.getElementById('grp-nom')?.value.trim();
+if (!nom) { alert('Le nom du groupe est obligatoire.'); return; }
+const ed = window._grpEd; const l = getGroupes();
+const g = { id: ed.id || ('g' + uid()), nom, ids: [...ed.sel] };
+const i = l.findIndex(x => x.id === g.id);
+if (i >= 0) l[i] = g; else l.push(g);
+await saveGroupes(l);
+showToast('Groupe enregistré', C.success);
+if (ed.id) grpListe(); else grpQrFiche(g.id);
+}
+async function grpDel(gid) {
+const g = getGroupes().find(x => x.id === gid); if (!g) return;
+if (!confirm(`Supprimer le groupe « ${g.nom} » ? (les pièces ne sont pas supprimées)`)) return;
+await saveGroupes(getGroupes().filter(x => x.id !== gid));
+showToast('Groupe supprimé', C.success); grpListe();
+}
+function grpQrFiche(gid) {
+const g = getGroupes().find(x => x.id === gid); if (!g) return;
+openModal(`<div class="mh"></div>
+<div class="mhd"><span class="mt">QR du groupe</span><button class="mc" onclick="closeModal()">×</button></div>
+<div class="mb" style="text-align:center">
+<div style="font-size:18px;font-weight:800;margin-bottom:10px">${esc(g.nom)}</div>
+<img src="${grpQrUrl(g,220)}" width="220" height="220" style="border:1px solid #eee;border-radius:10px;padding:10px;background:#fff"/>
+<div style="font-size:11px;color:var(--muted);margin:10px 0">${grpPieces(g).length} pièce(s) · à scanner depuis Stock → Scanner une pièce</div>
+<button class="bp" onclick="grpImprimer('${g.id}')">🖨 Imprimer l'étiquette</button>
+<button class="bs" style="width:100%;margin-top:10px" onclick="grpListe()">← Retour aux groupes</button>
+</div>`);
+}
+function grpImprimer(gid) {
+const l = gid ? getGroupes().filter(g => g.id === gid) : getGroupes();
+const w = window.open('', '_blank');
+if (!w) { alert('Autorisez les pop-ups pour imprimer.'); return; }
+w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>QR groupes de pièces</title>
+<style>body{font-family:-apple-system,Arial,sans-serif;margin:16px}.g{display:inline-block;width:230px;border:1px dashed #999;border-radius:10px;padding:12px;margin:8px;text-align:center;page-break-inside:avoid}
+.n{font-size:20px;font-weight:800;margin-bottom:6px}.s{font-size:10px;color:#666}img{display:block;margin:0 auto}</style></head><body>
+${l.map(g=>`<div class="g"><div class="n">${esc(g.nom)}</div><img src="${grpQrUrl(g,200)}" width="200" height="200"/><div class="s">GMAO · groupe de pièces</div></div>`).join('')}
+<script>window.onload=()=>setTimeout(()=>window.print(),700)<\/script></body></html>`);
+w.document.close();
 }
 
 async function validerAssociation(code) {
