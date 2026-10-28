@@ -1004,6 +1004,7 @@ coutTotal: 'cout_total',
 dernierPassage: 'dernier_passage',
 prochaineEcheance: 'prochaine_echeance',
 seuilAlerte: 'seuil_alerte',
+codeBarre: 'code_barre',
 prixUnitaire: 'prix_unitaire',
 otId: 'ot_id',
 pieceId: 'piece_id',
@@ -1818,15 +1819,19 @@ showPrintView(html, `QR Codes — ${S.eq.length} équipement(s)`);
 // ═══════════════════════════════════
 let scanStream=null, scanRAF=null;
 
-function openScanner() {
+function openScanner(mode) {
 // Arrêter toute caméra précédente
 stopScanner();
+window._scanMode = mode === 'stock' ? 'stock' : 'eq';
+window._scanBusy = false;
+if (window._scanMode === 'stock') chargerZXing();
 
 openModal(`
 <div class="mh"></div>
-<div class="mhd"><span class="mt">📷 Scanner QR</span><button class="mc" onclick="closeScanner()">×</button></div>
+<div class="mhd"><span class="mt">${window._scanMode==='stock'?'📷 Scanner une pièce':'📷 Scanner QR'}</span><button class="mc" onclick="closeScanner()">×</button></div>
 <div class="mb">
 <div id="scan-st" style="text-align:center;color:var(--muted);font-size:13px;margin-bottom:12px">Démarrage caméra…</div>
+${window._scanMode==='stock'?`<div style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:10px">Code-barres du fournisseur ou QR code de l'étiquette</div>`:''}
 <div style="position:relative;border-radius:14px;overflow:hidden;background:#000">
 <video id="scan-vid" playsinline muted autoplay style="width:100%;display:block"></video>
 <canvas id="scan-cv" style="display:none"></canvas>
@@ -1904,14 +1909,14 @@ vid.srcObject = scanStream;
 vid.setAttribute('playsinline', 'true');
 vid.setAttribute('muted', 'true');
 await vid.play();
-if (stEl) stEl.textContent = 'Pointez vers un QR code GMAO';
+if (stEl) stEl.textContent = window._scanMode==='stock' ? 'Pointez vers le code-barres de la pièce' : 'Pointez vers un QR code GMAO';
 } catch(e) {
 if (stEl) stEl.innerHTML = `<span style="color:${C.danger}">⚠ Lecture vidéo impossible</span>`;
 stopScanner();
 return;
 }
 
-scanTick(vid, cv);
+if (window._scanMode === 'stock') scanTickStock(vid, cv); else scanTick(vid, cv);
 }
 
 function scanTick(vid,cv) {
@@ -1958,6 +1963,44 @@ if (stEl) stEl.innerHTML = `<span style="color:${C.warning}">⚠ Ce n'est pas un
 }
 }
 scanRAF = requestAnimationFrame(() => scanTick(vid, cv));
+}
+
+// ── Décodage multi-formats : code-barres (EAN, UPC, Code 128/39, ITF) et QR ──
+// 1) API native du navigateur (Android/Chrome) · 2) ZXing (iPhone) · 3) jsQR (QR seul)
+let _bcDetector = null;
+function chargerZXing() {
+if (window.ZXing || window._zxingLoading) return;
+window._zxingLoading = true;
+const sc = document.createElement('script');
+sc.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
+sc.onload = () => { try { window._zxing = new window.ZXing.BrowserMultiFormatReader(); } catch(e) {} };
+document.head.appendChild(sc);
+}
+async function decodeMulti(cv, img) {
+try {
+if (!_bcDetector && 'BarcodeDetector' in window) {
+_bcDetector = new window.BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','upc_e','code_128','code_39','itf','qr_code'] });
+}
+if (_bcDetector) { const r = await _bcDetector.detect(cv); if (r && r.length && r[0].rawValue) return r[0].rawValue; }
+} catch(e) {}
+try { if (window._zxing) { const r = window._zxing.decodeFromCanvas(cv); if (r) return r.getText(); } } catch(e) {}
+try { const c = window.jsQR && window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' }); if (c && c.data) return c.data; } catch(e) {}
+return null;
+}
+function scanTickStock(vid, cv) {
+if (!vid || !cv) return;
+if (vid.readyState >= vid.HAVE_ENOUGH_DATA && vid.videoWidth > 0 && !window._scanBusy) {
+cv.width = vid.videoWidth; cv.height = vid.videoHeight;
+const ctx = cv.getContext('2d', { willReadFrequently: true });
+ctx.drawImage(vid, 0, 0, cv.width, cv.height);
+const img = ctx.getImageData(0, 0, cv.width, cv.height);
+window._scanBusy = true;
+decodeMulti(cv, img).then(code => {
+window._scanBusy = false;
+if (code && String(code).trim()) { stopScanner(); stockScanCode(String(code).trim()); }
+}).catch(() => { window._scanBusy = false; });
+}
+scanRAF = requestAnimationFrame(() => scanTickStock(vid, cv));
 }
 
 // Fermeture du scanner : la caméra est mise en veille (piste désactivée, voyant éteint) mais pas libérée,
@@ -3817,6 +3860,7 @@ return `
 </div>
 </div>
 ${siteForce?`<div style="display:flex;gap:8px;align-items:center;padding:4px 2px 10px;font-size:11px;color:var(--muted)"><span style="flex:1">🔒 Visible uniquement par les managers</span><button class="bs" style="padding:6px 10px;font-size:12px" onclick="generateStockReport(false,'${site}')">📄 PDF</button><button class="bs" style="padding:6px 10px;font-size:12px" onclick="generateStockReport(true,'${site}')">⚠ PDF alertes</button></div>`:`<div style="display:flex;gap:8px;padding:4px 2px 10px">${siteTabs}</div>`}
+${canWrite()?`<button onclick="openScannerStock()" style="width:100%;display:flex;align-items:center;justify-content:center;gap:10px;background:rgba(232,151,10,.15);border:1px solid rgba(232,151,10,.5);color:${C.accent};font-size:15px;font-weight:800;padding:13px;border-radius:12px;cursor:pointer;font-family:-apple-system,sans-serif;margin-bottom:10px">📷 Scanner une pièce (entrée / sortie)</button>`:''}
 <div class="sc"><input id="st-search" class="si" placeholder="Rechercher…" value="${esc(S.search.stock)}" oninput="S.search.stock=this.value;render()"/></div>
 ${list.length===0?`<div class="empty"><div class="empty-i">📦</div><div>Aucune pièce en stock ${stockSiteLbl(site)}</div></div>`:`
 ${alertes.length?`
@@ -3838,6 +3882,87 @@ ${categories.map(cat => `
 ${canWrite()?`<button class="fab" onclick="modalSt(null)">+</button>`:""}`;
 }
 
+// ═══════════════════════════════════
+// SCAN D'UNE PIÈCE : entrée / sortie de stock
+// ═══════════════════════════════════
+const norm = v => String(v||'').trim().toLowerCase();
+const stockParCode = code => S.stock.find(s => norm(s.codeBarre) && norm(s.codeBarre) === norm(code))
+  || S.stock.find(s => norm(s.reference) && norm(s.reference) === norm(code));
+function openScannerStock() { openScanner('stock'); }
+
+function stockScanCode(code) {
+const item = stockParCode(code);
+if (item) modalMouvement(item.id, code); else modalCodeInconnu(code);
+}
+
+function modalMouvement(id, code) {
+const s = S.stock.find(x => x.id === id); if (!s) return;
+const al = s.quantite <= s.seuilAlerte;
+openModal(`<div class="mh"></div>
+<div class="mhd"><span class="mt">📦 Entrée / sortie</span><button class="mc" onclick="closeModal()">×</button></div>
+<div class="mb">
+<div style="background:var(--surface2);border-left:3px solid ${al?C.warning:C.success};border-radius:12px;padding:14px;margin-bottom:14px">
+<div style="font-size:15px;font-weight:800">${esc(s.designation)}</div>
+<div style="font-size:11px;color:var(--muted);margin-top:3px"><span class="mono" style="color:${C.accent}">${esc(s.reference||'sans réf.')}</span> · ${esc(stockSiteLbl(stockSite(s)))} · ${esc(s.localisation||'emplacement non précisé')}</div>
+<div style="display:flex;align-items:baseline;gap:8px;margin-top:10px">
+<span style="font-size:30px;font-weight:800;color:${al?C.warning:C.success};font-family:monospace">${s.quantite}</span>
+<span style="font-size:12px;color:var(--muted)">en stock${al?` · seuil d'alerte ${s.seuilAlerte}`:''}</span>
+</div>
+</div>
+<div class="fi"><label class="fl">Quantité</label><input class="inp" type="number" min="1" inputmode="numeric" id="mv-qte" value="1" style="font-size:18px;font-weight:700;text-align:center"/></div>
+<div style="display:flex;gap:10px;margin-bottom:10px">
+<button class="bs" style="flex:1;padding:14px;font-size:15px;font-weight:800;background:rgba(248,81,73,.15);border:1px solid rgba(248,81,73,.5);color:${C.danger}" onclick="mouvement('${s.id}',-1)">− Sortie</button>
+<button class="bs" style="flex:1;padding:14px;font-size:15px;font-weight:800;background:rgba(63,185,80,.15);border:1px solid rgba(63,185,80,.5);color:${C.success}" onclick="mouvement('${s.id}',1)">+ Entrée</button>
+</div>
+${code && !norm(s.codeBarre) ? `<button class="bs" style="width:100%;margin-bottom:10px;font-size:12px" onclick="associerCode('${s.id}','${esc(code)}')">🔗 Mémoriser le code ${esc(code)} pour cette pièce</button>` : ''}
+<button class="bs" style="width:100%" onclick="openScannerStock()">📷 Scanner une autre pièce</button>
+</div>`);
+}
+
+async function mouvement(id, sens) {
+const s = S.stock.find(x => x.id === id); if (!s) return;
+const q = Math.max(1, Number(document.getElementById('mv-qte')?.value) || 1);
+if (sens < 0 && q > s.quantite && !confirm(`Il n'y a que ${s.quantite} en stock. Sortir quand même ${q} ?`)) return;
+const updated = { ...s, quantite: Math.max(0, s.quantite + sens * q) };
+S.stock = S.stock.map(x => x.id === id ? updated : x);
+syncSave('stock', updated);
+showToast(`${sens<0?'Sortie':'Entrée'} de ${q} · ${updated.quantite} en stock`, sens<0?C.warning:C.success);
+render(); modalMouvement(id);
+}
+
+async function associerCode(id, code) {
+const s = S.stock.find(x => x.id === id); if (!s) return;
+const updated = { ...s, codeBarre: code };
+S.stock = S.stock.map(x => x.id === id ? updated : x);
+syncSave('stock', updated);
+showToast('Code mémorisé', C.success);
+modalMouvement(id);
+}
+
+function modalCodeInconnu(code) {
+const dispo = S.stock.filter(s => canManage() || !STOCK_PRIV.includes(stockSite(s)));
+openModal(`<div class="mh"></div>
+<div class="mhd"><span class="mt">Code non reconnu</span><button class="mc" onclick="closeModal()">×</button></div>
+<div class="mb">
+<div style="background:rgba(232,151,10,.1);border-left:3px solid ${C.accent};border-radius:10px;padding:12px;margin-bottom:14px">
+<div style="font-size:12px;color:var(--muted)">Code scanné</div>
+<div class="mono" style="font-size:16px;font-weight:800;color:${C.accent};word-break:break-all">${esc(code)}</div>
+</div>
+<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Associez-le à une pièce existante : au prochain scan, elle sera reconnue automatiquement.</div>
+${pieceSearchWidget('ci-piece', dispo, null, stockSitePublic(S.stockSite))}
+<button class="bp" onclick="validerAssociation('${esc(code)}')">🔗 Associer à cette pièce</button>
+<div style="font-size:12px;color:var(--muted);margin:14px 0 8px">Ou, si la pièce n'existe pas encore :</div>
+<button class="bs" style="width:100%" onclick="closeModal();modalSt(null,'${esc(code)}')">+ Créer une nouvelle pièce avec ce code</button>
+<button class="bs" style="width:100%;margin-top:10px" onclick="openScannerStock()">📷 Scanner un autre code</button>
+</div>`);
+}
+
+async function validerAssociation(code) {
+const id = document.getElementById('ci-piece')?.value;
+if (!id) { alert('Choisissez une pièce dans la liste.'); return; }
+await associerCode(id, code);
+}
+
 function adjStock(id, delta) {
 const item = S.stock.find(s=>s.id===id); if (!item) return;
 const updated = {...item, quantite: Math.max(0, item.quantite+delta)};
@@ -3845,10 +3970,10 @@ S.stock=S.stock.map(s=>s.id===id?updated:s);
 syncSave('stock', updated); render();
 }
 
-function modalSt(id) {
+function modalSt(id, codeBarre) {
 const s=id?S.stock.find(x=>x.id===id):null;
 const isN=!s;
-const f=s?{...s,site:stockSite(s)}:{site:STOCK_PRIV_PAGE[S.page] || stockSitePublic(S.stockSite),reference:'',designation:'',categorie:'',quantite:0,seuilAlerte:1,localisation:'',fournisseur:'',prixUnitaire:0,observations:''};
+const f=s?{...s,site:stockSite(s)}:{site:STOCK_PRIV_PAGE[S.page] || stockSitePublic(S.stockSite),reference:'',designation:'',categorie:'',quantite:0,seuilAlerte:1,localisation:'',fournisseur:'',prixUnitaire:0,observations:'',codeBarre:codeBarre||''};
 
 openModal(`
 <div class="mh"></div>
@@ -3872,6 +3997,7 @@ openModal(`
 <div class="fi"><label class="fl">Seuil min.</label><input class="inp" type="number" min="0" inputmode="numeric" id="ss" value="${f.seuilAlerte}"/></div>
 <div class="fi"><label class="fl">PU (€)</label><input class="inp" type="number" min="0" step="0.01" id="sp" value="${f.prixUnitaire}"/></div>
 </div>
+<div class="fi"><label class="fl">Code-barres / QR</label><input class="inp" id="scb" value="${esc(f.codeBarre||'')}" placeholder="Scannez-le depuis la page Stock"/></div>
 <div class="fi"><label class="fl">Observations</label><textarea class="ta" id="so">${esc(f.observations)}</textarea></div>
 ${(!isN && canDelete())?`<button class="bd" onclick="delSt('${s.id}')">Supprimer cette pièce</button>`:''}
 ${canWrite()?`<button class="bp" onclick="saveSt('${isN?'':s.id}')">${isN?'Ajouter au stock':'Enregistrer'}</button>`:''}
@@ -3881,7 +4007,7 @@ ${canWrite()?`<button class="bp" onclick="saveSt('${isN?'':s.id}')">${isN?'Ajout
 function saveSt(id) {
 const designation=document.getElementById('sd').value.trim();
 if (!designation) { alert('Désignation obligatoire'); return; }
-const d={designation,reference:document.getElementById('sr').value,categorie:document.getElementById('sc').value,fournisseur:document.getElementById('sf').value,localisation:document.getElementById('sl').value,quantite:Number(document.getElementById('sq').value)||0,seuilAlerte:Number(document.getElementById('ss').value)||0,prixUnitaire:Number(document.getElementById('sp').value)||0,observations:document.getElementById('so').value,site:(v=>v==='Salem'?'Salem':(STOCK_PRIV.includes(v)&&canManage())?v:'Débauche')(document.getElementById('ssite').value)};
+const d={designation,reference:document.getElementById('sr').value,categorie:document.getElementById('sc').value,fournisseur:document.getElementById('sf').value,localisation:document.getElementById('sl').value,quantite:Number(document.getElementById('sq').value)||0,seuilAlerte:Number(document.getElementById('ss').value)||0,prixUnitaire:Number(document.getElementById('sp').value)||0,observations:document.getElementById('so').value,codeBarre:(document.getElementById('scb')?.value||'').trim(),site:(v=>v==='Salem'?'Salem':(STOCK_PRIV.includes(v)&&canManage())?v:'Débauche')(document.getElementById('ssite').value)};
 const row = id ? {...S.stock.find(s=>s.id===id), ...d} : {id:uid(), ...d};
 if (id) S.stock=S.stock.map(s=>s.id===id?row:s);
 else S.stock=[...S.stock, row];
