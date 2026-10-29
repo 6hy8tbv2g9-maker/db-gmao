@@ -1832,6 +1832,7 @@ openModal(`
 <div class="mb">
 <div id="scan-st" style="text-align:center;color:var(--muted);font-size:13px;margin-bottom:12px">Démarrage caméra…</div>
 ${window._scanMode==='stock'?`<div style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:10px">Code-barres du fournisseur ou QR code de l'étiquette</div>`:''}
+${window._scanMode==='stock'?`<div style="display:flex;gap:8px;margin-top:12px"><input class="inp" id="scan-man" placeholder="Ou saisir le code à la main" style="flex:1"/><button class="bs" onclick="const v=document.getElementById('scan-man').value.trim(); if(v){stopScanner(); stockScanCode(v);}">OK</button></div>`:''}
 <div style="position:relative;border-radius:14px;overflow:hidden;background:#000">
 <video id="scan-vid" playsinline muted autoplay style="width:100%;display:block"></video>
 <canvas id="scan-cv" style="display:none"></canvas>
@@ -1882,9 +1883,10 @@ scanStream = null;
 // Demander la caméra
 try {
 scanStream = await navigator.mediaDevices.getUserMedia({
-video: { facingMode: 'environment' },
+video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
 audio: false
 });
+try { const tr = scanStream.getVideoTracks()[0]; const caps = (tr.getCapabilities && tr.getCapabilities()) || {}; if (caps.focusMode && caps.focusMode.includes('continuous')) await tr.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e) {}
 } catch(e1) {
 try {
 scanStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
@@ -1995,13 +1997,23 @@ return null;
 }
 function scanTickStock(vid, cv) {
 if (!vid || !cv) return;
-if (vid.readyState >= vid.HAVE_ENOUGH_DATA && vid.videoWidth > 0 && !window._scanBusy) {
+const now = performance.now();
+if (vid.readyState >= vid.HAVE_ENOUGH_DATA && vid.videoWidth > 0 && !window._scanBusy && now - (window._scanLast||0) > 140) {
+window._scanLast = now;
 cv.width = vid.videoWidth; cv.height = vid.videoHeight;
 const ctx = cv.getContext('2d', { willReadFrequently: true });
 ctx.drawImage(vid, 0, 0, cv.width, cv.height);
-const img = ctx.getImageData(0, 0, cv.width, cv.height);
+// zone centrale (là où on vise) : plus rapide et plus précise que l'image entière
+const cw = Math.round(cv.width * 0.8), ch = Math.round(cv.height * 0.5);
+const crop = document.createElement('canvas'); crop.width = cw; crop.height = ch;
+const cctx = crop.getContext('2d', { willReadFrequently: true });
+cctx.drawImage(cv, Math.round((cv.width - cw) / 2), Math.round((cv.height - ch) / 2), cw, ch, 0, 0, cw, ch);
 window._scanBusy = true;
-decodeMulti(cv, img).then(code => {
+(async () => {
+let code = await decodeMulti(crop, cctx.getImageData(0, 0, cw, ch));
+if (!code) code = await decodeMulti(cv, ctx.getImageData(0, 0, cv.width, cv.height));
+return code;
+})().then(code => {
 window._scanBusy = false;
 if (code && String(code).trim()) { stopScanner(); stockScanCode(String(code).trim()); }
 }).catch(() => { window._scanBusy = false; });
