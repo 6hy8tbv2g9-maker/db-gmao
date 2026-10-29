@@ -1883,7 +1883,7 @@ scanStream = null;
 // Demander la caméra
 try {
 scanStream = await navigator.mediaDevices.getUserMedia({
-video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
 audio: false
 });
 try { const tr = scanStream.getVideoTracks()[0]; const caps = (tr.getCapabilities && tr.getCapabilities()) || {}; if (caps.focusMode && caps.focusMode.includes('continuous')) await tr.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e) {}
@@ -1972,7 +1972,7 @@ scanRAF = requestAnimationFrame(() => scanTick(vid, cv));
 // 1) API native du navigateur (Android/Chrome) · 2) ZXing (iPhone) · 3) jsQR (QR seul)
 let _bcDetector = null;
 function chargerZXing() {
-if (window.ZXing || window._zxingLoading) return;
+if (window._zxingLoading) return;
 window._zxingLoading = true;
 const sc = document.createElement('script');
 sc.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
@@ -1983,6 +1983,11 @@ h.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.EAN_13, Z.BarcodeForma
 const r = new Z.MultiFormatReader(); r.setHints(h); window._zxing = r;
 } catch(e) {} };
 document.head.appendChild(sc);
+// Décodeur WASM (zxing-cpp) : bien plus tolérant (code incliné, flou, dense, faible contraste)
+const sw = document.createElement('script');
+sw.src = 'https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.6/dist/iife/reader/index.js';
+sw.onload = () => { try { window._zxw = window.ZXingWASM; window._zxw.prepareZXingModule({ fireImmediately: true }); } catch(e) {} };
+document.head.appendChild(sw);
 }
 async function decodeMulti(cv, img) {
 try {
@@ -1991,7 +1996,10 @@ _bcDetector = new window.BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','u
 }
 if (_bcDetector) { const r = await _bcDetector.detect(cv); if (r && r.length && r[0].rawValue) return r[0].rawValue; }
 } catch(e) {}
-try { if (window._zxing) { const Z = window.ZXing; const r = window._zxing.decode(new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(cv)))); if (r) return r.getText(); } } catch(e) {}
+try { if (window._zxw) { const r = await window._zxw.readBarcodes(img, { formats: ['EAN-13','EAN-8','UPC-A','UPC-E','Code128','Code39','ITF','Codabar','QRCode','DataMatrix'], tryHarder: true, tryRotate: true, tryInvert: true, tryDownscale: true, maxNumberOfSymbols: 1 }); if (r && r.length && r[0].text) return r[0].text; } } catch(e) {}
+try { if (window._zxing) { const Z = window.ZXing; const dec = c => window._zxing.decode(new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(c))));
+try { return dec(cv).getText(); } catch(e) {}
+if (cv.width <= 1600) { const up = document.createElement('canvas'); up.width = cv.width * 2; up.height = cv.height * 2; const uc = up.getContext('2d'); uc.imageSmoothingQuality = 'high'; uc.drawImage(cv, 0, 0, up.width, up.height); try { return dec(up).getText(); } catch(e) {} } } } catch(e) {}
 try { const c = window.jsQR && window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' }); if (c && c.data) return c.data; } catch(e) {}
 return null;
 }
