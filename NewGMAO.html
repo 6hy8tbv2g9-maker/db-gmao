@@ -3624,7 +3624,7 @@ return `<div class="ci" onclick="modalReleveView('${r.id}')">
 <span style="font-weight:700">${rlvDateFr(r.date)}</span>${badge(r.poste||'—',C.info)}
 ${nd?badge(nd+' déf. têtes',C.warning):badge('0 déf. têtes',C.success)}
 </div>
-<div style="font-size:11px;color:var(--muted)">${esc(r.operateur||'—')} · L1 ${c.rempliL1??'—'} fûts (${c.defautL1??'—'} déf.) · L2 ${c.rempliL2??'—'} fûts (${c.defautL2??'—'} déf.)</div>
+<div style="font-size:11px;color:var(--muted)">${esc(r.operateur||'—')} · L1 ${c.rempliL1??'—'} fûts (${c.defautL1??'—'} déf.) · L2 ${c.rempliL2??'—'} fûts (${c.defautL2??'—'} déf.)${rlvTotFuts(c)===null?'':` · <b style="color:${C.success}">total ${rlvTotFuts(c)} fûts</b>`}</div>
 </div>
 <span style="color:var(--muted)">›</span>
 </div>`;
@@ -3693,7 +3693,11 @@ openModal(`
 <div style="font-size:12px;font-weight:800;color:${C.accent};text-transform:uppercase;letter-spacing:.05em;margin:14px 0 4px">1 · Compteurs (écran COMBI)</div>
 <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Recopier les valeurs de l'écran COMBI : Filled kegs (fûts propres) et failed kegs (fûts en défaut), L1 et L2.</div>
 <div class="g2">
-${RLV_COMPTEURS.map(c=>`<div class="fi"><label class="fl">${c.lb} (${c.u})</label>${inpN('rlv-c-'+c.k)}</div>`).join('')}
+${RLV_COMPTEURS.map(c=>`<div class="fi"><label class="fl">${c.lb} (${c.u})</label>${inpN('rlv-c-'+c.k).replace('<input','<input oninput="rlvMajTotFuts()"')}</div>`).join('')}
+</div>
+<div style="display:flex;justify-content:space-between;align-items:center;background:var(--surface2);border-left:3px solid ${C.success};border-radius:8px;padding:10px 12px;margin-bottom:4px">
+<span style="font-size:13px;font-weight:700">Total fûts propres (L1 + L2)</span>
+<span class="mono" id="rlv-tot-futs" style="font-size:18px;font-weight:800;color:var(--muted)">—</span>
 </div>
 <div style="font-size:12px;font-weight:800;color:${C.accent};text-transform:uppercase;letter-spacing:.05em;margin:14px 0 4px">2 · Head statistics</div>
 <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Machine : connexion admin → bonhomme rouge → écran 9.0 → « Statistics H1-H2 », « H3-H6 », « H7-H10 ». Ouvrir uniquement les têtes qui ont des défauts et saisir le compteur de chaque étape (1 à 20). Cases vides = 0.</div>
@@ -3705,6 +3709,18 @@ ${RLV_TETES.map(teteBloc).join('')}
 <div class="fi"><label class="fl">Observations / problèmes rencontrés</label><textarea class="ta" id="rlv-obs" placeholder="Arrêts, fuites, alarmes…"></textarea></div>
 <button class="bp" onclick="saveReleve()">Enregistrer le relevé</button>
 </div>`);
+}
+
+const rlvTotFuts = c => {
+const a = Number((c||{}).rempliL1), b = Number((c||{}).rempliL2);
+const ok = [a, b].filter(v => Number.isFinite(v));
+return ok.length ? ok.reduce((x, y) => x + y, 0) : null;
+};
+function rlvMajTotFuts() {
+const lire = k => { const v = document.getElementById('rlv-c-' + k); return v && v.value !== '' ? Number(v.value) : NaN; };
+const tot = rlvTotFuts({ rempliL1: lire('rempliL1'), rempliL2: lire('rempliL2') });
+const el = document.getElementById('rlv-tot-futs');
+if (el) { el.textContent = tot === null ? '—' : tot; el.style.color = tot === null ? 'var(--muted)' : C.success; }
 }
 
 function rlvMajTot(n) {
@@ -3755,6 +3771,7 @@ openModal(`
 <div class="mb">
 <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Saisi par <b style="color:var(--text)">${esc(r.operateur||'—')}</b>${r.createdAt?` le ${new Date(r.createdAt).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}`:''}</div>
 <div class="card" style="margin-bottom:12px">
+${rlvTotFuts(c)===null?'':`<div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border)22;font-size:13px;background:var(--surface2)"><span style="font-weight:700">Total fûts propres (L1 + L2)</span><span class="mono" style="font-weight:800;color:${C.success}">${rlvTotFuts(c)} <span style="font-size:11px;color:var(--muted)">fûts</span></span></div>`}
 ${RLV_COMPTEURS.map(k=>`<div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border)22;font-size:13px"><span>${k.lb}</span><span class="mono" style="font-weight:700">${c[k.k]??'—'} <span style="color:var(--muted);font-weight:400">${k.u}</span></span></div>`).join('')}
 </div>
 <div style="font-size:12px;font-weight:800;color:${C.accent};text-transform:uppercase;letter-spacing:.05em;margin:4px 0 8px">Head statistics · ${rlvTotalDef(r)} défaut(s)</div>
