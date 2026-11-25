@@ -3649,6 +3649,8 @@ ${canReleve()?`
 ${rlvProcedureHtml()}
 </div>
 </details>
+<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:14px 14px 6px">🏆 Meilleur laveur de fûts · ${esc(rlvMoisLbl())}</div>
+${rlvPodiumHtml()}
 <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:14px 14px 6px">Défauts par tête · 30 derniers jours</div>
 <div class="card" style="padding:10px 14px">
 ${parTete.map(t=>`
@@ -3709,6 +3711,51 @@ ${RLV_TETES.map(teteBloc).join('')}
 <div class="fi"><label class="fl">Observations / problèmes rencontrés</label><textarea class="ta" id="rlv-obs" placeholder="Arrêts, fuites, alarmes…"></textarea></div>
 <button class="bp" onclick="saveReleve()">Enregistrer le relevé</button>
 </div>`);
+}
+
+// ── Classement « Meilleur laveur de fûts » (mois en cours, au volume) ──
+const RLV_MEDAILLES = ['🥇','🥈','🥉'];
+const rlvMoisCourant = () => today().slice(0, 7);
+const rlvMoisLbl = () => new Date(today()+'T12:00:00').toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+function rlvClassement(mois) {
+const m = mois || rlvMoisCourant();
+const par = {};
+(S.releves||[]).filter(r => (r.date||'').startsWith(m)).forEach(r => {
+const nom = (r.operateur||'').trim(); if (!nom) return;
+const cle = nom.toLowerCase();
+const c = r.compteurs || {};
+const p = par[cle] || (par[cle] = { nom, futs: 0, defauts: 0, postes: 0 });
+p.futs += (Number(c.rempliL1)||0) + (Number(c.rempliL2)||0);
+p.defauts += (Number(c.defautL1)||0) + (Number(c.defautL2)||0);
+p.postes++;
+});
+// Les fûts en défaut viennent de la machine, pas de l'opérateur : ils n'entrent pas dans le classement.
+return Object.values(par)
+.map(p => ({ ...p, moy: p.postes ? Math.round(p.futs / p.postes) : 0 }))
+.sort((a, b) => b.futs - a.futs || b.moy - a.moy || a.nom.localeCompare(b.nom));
+}
+function rlvPodiumHtml() {
+const cl = rlvClassement();
+if (!cl.length) return `<div class="card" style="padding:14px;font-size:12px;color:var(--muted)">Aucun relevé ce mois-ci : le classement démarre au premier relevé saisi.</div>`;
+const max = Math.max(1, cl[0].futs);
+const moi = rlvMoi().trim().toLowerCase();
+return `<div class="card" style="padding:10px 14px">
+${cl.map((p, i) => {
+const mien = p.nom.trim().toLowerCase() === moi;
+const coul = i === 0 ? C.accent : 'var(--text)';
+return `<div style="padding:7px 0;${i?'border-top:1px solid var(--border)22':''}">
+<div style="display:flex;align-items:center;gap:9px">
+<div style="width:26px;flex-shrink:0;font-size:${i<3?'17px':'12px'};text-align:center;color:var(--muted)">${RLV_MEDAILLES[i] || (i+1)}</div>
+<div style="flex:1;min-width:0">
+<div style="font-size:13px;font-weight:${i===0?800:700};color:${coul}">${esc(p.nom)}${mien?' <span style="font-size:10px;color:var(--muted)">(toi)</span>':''}</div>
+<div style="font-size:10px;color:var(--muted)">${p.postes} poste${p.postes>1?'s':''} · ${p.moy} fûts/poste</div>
+</div>
+<div class="mono" style="font-weight:800;font-size:15px;color:${coul};flex-shrink:0">${p.futs}</div>
+</div>
+<div style="height:5px;background:var(--surface2);border-radius:3px;overflow:hidden;margin:4px 0 0 35px"><div style="height:100%;width:${p.futs/max*100}%;background:${i===0?C.accent:C.info};opacity:${i===0?1:.6}"></div></div>
+</div>`;
+}).join('')}
+</div>`;
 }
 
 const rlvTotFuts = c => {
