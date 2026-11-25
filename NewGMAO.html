@@ -3661,6 +3661,7 @@ ${parTete.map(t=>`
 </div>
 ${t.top.length?`<div style="font-size:10px;color:var(--muted);margin:-2px 0 4px 102px">${t.top.map(([e,v])=>`étape ${e} : ${v}`).join(' · ')}</div>`:''}`).join('')}
 </div>
+${canManage()?`<div style="padding:14px 14px 0"><button class="bs" style="width:100%" onclick="exporterRelevesExcel()">📊 Exporter Excel · erreurs par tête, opérateur, étape</button></div>`:''}
 <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:14px 14px 6px;display:flex;justify-content:space-between"><span>Historique</span><span>${list.length}</span></div>
 ${list.length?`<div class="card">${list.slice(0,60).map(row).join('')}</div>`:`<div class="empty"><div class="empty-i">📝</div><div>Aucun relevé pour l'instant</div></div>`}
 <div class="sp"></div>`;
@@ -3751,6 +3752,470 @@ const lire = k => { const v = document.getElementById('rlv-c-' + k); return v &&
 const tot = rlvTotFuts({ rempliL1: lire('rempliL1'), rempliL2: lire('rempliL2') });
 const el = document.getElementById('rlv-tot-futs');
 if (el) { el.textContent = tot === null ? '—' : tot; el.style.color = tot === null ? 'var(--muted)' : C.success; }
+}
+
+// ═══════════════════════════════════
+// EXPORT EXCEL — Relevés COMBI (erreurs par tête, par opérateur, par étape…)
+// Bouton « 📊 Exporter Excel » de la page Relevés. Le fichier est construit dans
+// le navigateur à partir de S.releves : toujours à jour au moment du clic.
+// Bibliothèques chargées seulement au premier export.
+// ═══════════════════════════════════
+const XL_LIBS = [
+'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js',
+'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js',
+];
+function xlChargerScript(src) {
+return new Promise((ok, ko) => {
+if ([...document.scripts].some(s => s.src === src)) return ok();
+const s = document.createElement('script');
+s.src = src; s.onload = () => ok(); s.onerror = () => ko(new Error('Chargement impossible : ' + src));
+document.head.appendChild(s);
+});
+}
+let xlEnCours = false;
+async function exporterRelevesExcel() {
+if (xlEnCours) return;
+if (!(S.releves || []).length) { showToast('Aucun relevé à exporter', C.warning); return; }
+xlEnCours = true;
+showToast('Préparation du fichier Excel…', C.info);
+try {
+for (const src of XL_LIBS) await xlChargerScript(src);
+const blob = await rlvClasseurBlob(window.ExcelJS, window.JSZip, S.releves, RLV_TETES, RLV_POSTES);
+const a = document.createElement('a');
+a.href = URL.createObjectURL(blob);
+a.download = `releves-combi-erreurs-tetes-${today()}.xlsx`;
+document.body.appendChild(a); a.click(); a.remove();
+setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+showToast('Export Excel téléchargé', C.success);
+} catch (e) {
+console.error('Export Excel :', e);
+showToast('Export impossible : ' + (e && e.message || e), C.danger);
+} finally { xlEnCours = false; }
+}
+
+// ── Construction du classeur (ExcelJS) + graphiques (ajoutés au zip avec JSZip) ──
+async function rlvClasseurBlob(ExcelJS, JSZip, releves, tetesDef, postes) {
+const { wb, graphiques } = rlvClasseur(ExcelJS, releves, tetesDef, postes);
+const buf = await wb.xlsx.writeBuffer();
+const out = await xlAjouterGraphiques(JSZip, buf, graphiques);
+return new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+
+function rlvClasseur(ExcelJS, releves, tetesDef, postes) {
+// ---------- Données
+const nb = v => { const n = Number(v); return v === '' || v === null || v === undefined || !Number.isFinite(n) ? null : n; };
+const jour = s => { const [y, m, d] = String(s).slice(0, 10).split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)); };
+const lundi = d => new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * 864e5);
+const jj = d => d.toISOString().slice(8, 10) + '/' + d.toISOString().slice(5, 7);
+const R = [...releves].filter(r => r && /^\d{4}-\d{2}-\d{2}/.test(r.date || '')).sort((a, b) =>
+a.date.localeCompare(b.date) || postes.indexOf(a.poste) - postes.indexOf(b.poste) || (a.createdAt || '').localeCompare(b.createdAt || ''))
+.map((r, i) => {
+const c = r.compteurs || {};
+const p1 = nb(c.rempliL1), d1 = nb(c.defautL1), p2 = nb(c.rempliL2), d2 = nb(c.defautL2);
+const det = [];
+Object.entries(r.defauts || {}).forEach(([t, et]) => Object.entries(et || {}).forEach(([e, v]) => {
+const n = Number(v) || 0; if (n > 0) det.push({ t: Number(t), e: Number(e), n });
+}));
+const d = jour(r.date);
+return { i: i + 1, d, sem: lundi(d), poste: r.poste || '', op: (r.operateur || '').trim() || '(non renseigné)',
+p1, d1, p2, d2, det, saisi: det.length > 0, obs: (r.observations || '').replace(/\s*\n\s*/g, ' ; ').trim(), reset: !!r.resetFait };
+});
+const NR = R.length;
+const LONG = R.flatMap(r => r.det.map(x => ({ r, ...x })));
+const ND = LONG.length;
+const groupeDe = {}; tetesDef.forEach(t => { groupeDe[t.n] = t.g; });
+const TETES = [...new Set([...tetesDef.map(t => t.n), ...LONG.map(x => x.t)])].sort((a, b) => a - b);
+const GROUPES = [...new Set(TETES.map(t => groupeDe[t] || 'Autre'))];
+const ETAPES = [...new Set(LONG.map(x => x.e))].sort((a, b) => a - b); if (!ETAPES.length) ETAPES.push(1);
+const OPS = [...new Set(R.map(r => r.op))].sort((a, b) => a.localeCompare(b, 'fr'));
+const SEM = [...new Set(R.map(r => r.sem.getTime()))].sort((a, b) => a - b).map(t => new Date(t));
+const sum = (a, f) => a.reduce((s, x) => s + (f(x) || 0), 0);
+const propres = r => (r.p1 || 0) + (r.p2 || 0), defs = r => (r.d1 || 0) + (r.d2 || 0), traites = r => propres(r) + defs(r);
+const errs = r => sum(r.det, x => x.n);
+const div = (a, b) => b ? a / b : '';
+
+// ---------- Styles
+const A = 'Arial';
+const fN = { name: A, size: 10 }, fB = { name: A, size: 10, bold: true }, fH = { name: A, size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+const fT = { name: A, size: 14, bold: true, color: { argb: 'FF1F3864' } }, fI = { name: A, size: 9, italic: true, color: { argb: 'FF555555' } }, fP = { name: A, size: 9 };
+const HF = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F3864' } }, TF = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9E1F2' } };
+const bd = { style: 'thin', color: { argb: 'FFBFBFBF' } }, BD = { top: bd, left: bd, bottom: bd, right: bd };
+const CE = { horizontal: 'center', vertical: 'middle', wrapText: true };
+const ZT = '0;-0;"–"', ZV = '0;-0;""';
+const L = n => { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+const F = (formula, result) => ({ formula, result: result === undefined ? '' : result });
+const put = (ws, r, c, v, o = {}) => {
+const x = ws.getCell(r, c); x.value = v; x.font = o.font || fN; x.border = BD;
+if (o.fmt) x.numFmt = o.fmt; if (o.fill) x.fill = o.fill; if (o.al) x.alignment = o.al;
+return x;
+};
+const hdr = (ws, r, vals, c0 = 1) => vals.forEach((v, j) => put(ws, r, c0 + j, v, { font: fH, fill: HF, al: CE }));
+const txt = (ws, ref, v, font) => { const x = ws.getCell(ref); x.value = v; x.font = font; };
+const heat = (ws, ref) => ws.addConditionalFormatting({ ref, rules: [{ type: 'colorScale', priority: 1,
+cfvo: [{ type: 'num', value: 0 }, { type: 'percentile', value: 50 }, { type: 'max' }],
+color: [{ argb: 'FFFFFFFF' }, { argb: 'FFFFE699' }, { argb: 'FFF8696B' }] }] });
+const larg = (ws, ws_) => ws_.forEach((w, j) => { ws.getColumn(j + 1).width = w; });
+const fin = Math.max(2, ND + 1), finR = Math.max(2, NR + 1);
+const D = col => `'Données'!$${col}$2:$${col}$${fin}`;
+const RV = col => `'Relevés'!$${col}$2:$${col}$${finR}`;
+const per = `du ${jj(R[0].d)}/${R[0].d.getUTCFullYear()} au ${jj(R[NR - 1].d)}/${R[NR - 1].d.getUTCFullYear()}`;
+const genere = new Date().toLocaleString('fr-FR');
+
+const wb = new ExcelJS.Workbook();
+wb.creator = 'NewGMAO'; wb.created = new Date();
+wb.calcProperties = { fullCalcOnLoad: true };
+const feuille = (nom, gel) => wb.addWorksheet(nom, { views: [Object.assign({ showGridLines: false }, gel ? { state: 'frozen', xSplit: gel[0], ySplit: gel[1] } : {})] });
+const wsTO = feuille('Tête × Opérateur', [2, 4]);
+const wsTE = feuille('Tête × Étape', [2, 4]);
+const wsPO = feuille('Par opérateur');
+const wsOE = feuille('Opérateur × Étape', [2, 4]);
+const wsLP = feuille('Lignes & postes');
+const wsEV = feuille('Évolution', [1, 4]);
+const wsGR = feuille('Graphiques');
+const wsR = feuille('Relevés', [4, 1]);
+const wsD = feuille('Données', [0, 1]);
+
+// ---------- Données (brut, une ligne par tête × étape en défaut)
+hdr(wsD, 1, ['N° relevé', 'Date', 'Poste', 'Opérateur', 'Tête', 'Groupe', 'Étape', 'Erreurs', 'Semaine (lundi)']);
+LONG.forEach((x, k) => {
+const row = k + 2;
+[x.r.i, x.r.d, x.r.poste, x.r.op, x.t, groupeDe[x.t] || 'Autre', x.e, x.n].forEach((v, j) => put(wsD, row, j + 1, v, { fmt: j === 1 ? 'dd/mm/yyyy' : undefined }));
+put(wsD, row, 9, F(`B${row}-WEEKDAY(B${row},2)+1`, x.r.sem), { fmt: 'dd/mm/yyyy' });
+});
+larg(wsD, [10, 12, 12, 20, 7, 12, 7, 9, 13]);
+wsD.autoFilter = `A1:I${fin}`;
+
+// ---------- Relevés (un relevé par ligne)
+hdr(wsR, 1, ['N° relevé', 'Date', 'Poste', 'Opérateur', 'Fûts propres L1', 'Défauts L1', 'Fûts propres L2', 'Défauts L2',
+'Fûts propres total', 'Fûts en défaut total', 'Fûts traités', '% fûts en défaut', 'Erreurs têtes', 'Détail têtes saisi', 'Semaine (lundi)', 'Reset fait', 'Observations']);
+R.forEach(r => {
+const k = r.i + 1;
+const vals = [r.i, r.d, r.poste, r.op, r.p1, r.d1, r.p2, r.d2,
+F(`SUM(E${k},G${k})`, propres(r)), F(`SUM(F${k},H${k})`, defs(r)), F(`I${k}+J${k}`, traites(r)),
+F(`IF(K${k}=0,"",J${k}/K${k})`, div(defs(r), traites(r))), F(`SUMIFS(${D('H')},${D('A')},A${k})`, errs(r)),
+r.saisi ? 'Oui' : 'Non', F(`B${k}-WEEKDAY(B${k},2)+1`, r.sem), r.reset ? 'Oui' : 'Non', r.obs];
+vals.forEach((v, j) => put(wsR, k, j + 1, v, { fmt: { 1: 'dd/mm/yyyy', 11: '0.0%', 14: 'dd/mm/yyyy' }[j], al: j === 16 ? { wrapText: true, vertical: 'top' } : undefined }));
+});
+larg(wsR, [9, 11, 11, 18, 9, 9, 9, 9, 10, 10, 9, 10, 9, 10, 12, 8, 60]);
+wsR.getRow(1).height = 30;
+wsR.autoFilter = `A1:Q${finR}`;
+
+// ---------- Tête × Opérateur
+const h = 4, nc = OPS.length, cT = nc + 3, cP = nc + 4;  // A Tête, B Groupe, C.. opérateurs, total, %
+txt(wsTO, 'A1', 'Laveuse-remplisseuse — erreurs par tête et par opérateur', fT);
+txt(wsTO, 'A2', `Relevés de poste NewGMAO ${per} (${NR} relevés). Export du ${genere}.`, fI);
+hdr(wsTO, h, ['Tête', 'Groupe', ...OPS, 'Total', '% du total']);
+const saisiOp = op => R.filter(r => r.op === op && r.saisi);
+const errTO = (t, op) => sum(LONG.filter(x => x.t === t && (!op || x.r.op === op)), x => x.n);
+const totalErr = sum(LONG, x => x.n);
+const kt = h + TETES.length + 1;
+TETES.forEach((t, a) => {
+const k = h + 1 + a;
+put(wsTO, k, 1, `Tête ${t}`, { font: fB, fill: TF }); put(wsTO, k, 2, groupeDe[t] || 'Autre', { fill: TF });
+OPS.forEach((op, j) => put(wsTO, k, 3 + j, F(`IF(COUNTIFS(${RV('D')},${L(3 + j)}$${h},${RV('N')},"Oui")=0,"non saisi",SUMIFS(${D('H')},${D('E')},${t},${D('D')},${L(3 + j)}$${h}))`,
+saisiOp(op).length ? errTO(t, op) : 'non saisi'), { fmt: ZT, al: CE }));
+put(wsTO, k, cT, F(`SUM(C${k}:${L(cT - 1)}${k})`, errTO(t)), { font: fB, fmt: ZT, al: CE });
+put(wsTO, k, cP, F(`IF($${L(cT)}$${kt}=0,"",${L(cT)}${k}/$${L(cT)}$${kt})`, div(errTO(t), totalErr)), { fmt: '0.0%', al: CE });
+});
+const KD = kt + 5;
+put(wsTO, kt, 1, 'Total', { font: fB, fill: TF }); put(wsTO, kt, 2, '', { fill: TF });
+OPS.forEach((op, j) => put(wsTO, kt, 3 + j, F(`IF(${L(3 + j)}${KD}=0,"non saisi",SUM(${L(3 + j)}${h + 1}:${L(3 + j)}${kt - 1}))`,
+saisiOp(op).length ? sum(LONG.filter(x => x.r.op === op), x => x.n) : 'non saisi'), { font: fB, fill: TF, fmt: '0', al: CE }));
+put(wsTO, kt, cT, F(`SUM(${L(cT)}${h + 1}:${L(cT)}${kt - 1})`, totalErr), { font: fB, fill: TF, fmt: '0', al: CE });
+put(wsTO, kt, cP, F(`SUM(${L(cP)}${h + 1}:${L(cP)}${kt - 1})`, totalErr ? 1 : 0), { font: fB, fill: TF, fmt: '0.0%', al: CE });
+const OUI = `,${RV('N')},"Oui"`;
+const crit = j => j < cT ? `,${RV('D')},${L(j)}$${h}` : '';
+const cnt = (j, ex = '') => { const c = crit(j) + ex; return c ? `COUNTIFS(${c.slice(1)})` : `COUNTA(${RV('D')})`; };
+const sm = (col, j, ex = '') => { const c = crit(j) + ex; return c ? `SUMIFS(${RV(col)}${c})` : `SUM(${RV(col)})`; };
+const sel = j => j < cT ? R.filter(r => r.op === OPS[j - 3]) : R;
+const lignes = [
+['Postes (tous)', j => F(cnt(j), sel(j).length), '0'],
+['Fûts propres (tous postes)', j => F(sm('I', j), sum(sel(j), propres)), '0'],
+['Fûts en défaut (tous postes)', j => F(sm('J', j), sum(sel(j), defs)), '0'],
+['% fûts en défaut', j => F(`IF(${L(j)}${kt + 2}+${L(j)}${kt + 3}=0,"",${L(j)}${kt + 3}/(${L(j)}${kt + 2}+${L(j)}${kt + 3}))`, div(sum(sel(j), defs), sum(sel(j), traites))), '0.0%'],
+['Postes avec détail têtes', j => F(cnt(j, OUI), sel(j).filter(r => r.saisi).length), '0'],
+['Erreurs têtes par poste', j => F(`IF(${L(j)}${KD}=0,"",${L(j)}${kt}/${L(j)}${KD})`, div(sum(sel(j), errs), sel(j).filter(r => r.saisi).length)), '0.0'],
+['Fûts traités (postes avec détail)', j => F(j < cT ? `SUMIFS(${RV('K')}${crit(j)}${OUI})` : `SUMIFS(${RV('K')}${OUI})`, sum(sel(j).filter(r => r.saisi), traites)), '0'],
+['Erreurs têtes / 100 fûts traités', j => F(`IF(${L(j)}${kt + 7}=0,"",${L(j)}${kt}/${L(j)}${kt + 7}*100)`, (() => { const b = sum(sel(j).filter(r => r.saisi), traites); return b ? sum(sel(j), errs) / b * 100 : ''; })()), '0.0'],
+];
+lignes.forEach(([lab, fn, fmt], a) => {
+const k = kt + 1 + a;
+put(wsTO, k, 1, lab, { font: fB, fill: TF }); put(wsTO, k, 2, '', { fill: TF });
+for (let j = 3; j <= cT; j++) put(wsTO, k, j, fn(j), { font: j === cT ? fB : fN, fmt, al: CE });
+});
+heat(wsTO, `C${h + 1}:${L(cT - 1)}${kt - 1}`);
+wsTO.getColumn(1).width = 30; wsTO.getColumn(2).width = 12;
+for (let j = 3; j <= cP; j++) wsTO.getColumn(j).width = 13;
+wsTO.getRow(h).height = 30;
+const sansDetail = R.filter(r => !r.saisi);
+const opsSans = OPS.filter(op => !saisiOp(op).length);
+const notes = [
+'• Source : relevés de fin de poste saisis dans NewGMAO (écrans Head statistics de la COMBI). Une ligne = une tête, une colonne = un opérateur.',
+'• Groupes de têtes : H1-H2 prélaveuse, H3-H6 Ligne 1, H7-H10 Ligne 2 (comme dans NewGMAO).',
+'• Fûts traités = fûts propres + fûts en défaut. % fûts en défaut = fûts en défaut / fûts traités.',
+'• Les opérateurs n\'ont pas tous fait le même nombre de postes : pour comparer, utiliser « Erreurs têtes par poste » ou « Erreurs têtes / 100 fûts traités ».',
+sansDetail.length ? `• ${sansDetail.length} relevé(s) sans aucun détail par tête (${sansDetail.map(r => jj(r.d)).join(', ')}) : ils ne comptent pas dans les postes avec détail.` : '• Tous les relevés ont un détail par tête.',
+opsSans.length ? `• « non saisi » : ${opsSans.join(', ')} n'a/ont aucun relevé avec détail par tête. Leurs fûts figurent quand même dans les lignes « tous postes ».` : '',
+'• Autres onglets : Tête × Étape, Par opérateur, Opérateur × Étape, Lignes & postes, Évolution, Graphiques, Relevés (poste par poste) et Données (brut).',
+].filter(Boolean);
+txt(wsTO, `A${kt + 11}`, 'À lire', fB);
+notes.forEach((n, a) => txt(wsTO, `A${kt + 12 + a}`, n, fP));
+
+// ---------- Tête × Étape
+const ne = ETAPES.length;
+txt(wsTE, 'A1', 'Erreurs par tête et par étape (tous opérateurs)', fT);
+txt(wsTE, 'A2', 'Étape = numéro d\'étape relevé sur les écrans Head statistics.', fI);
+hdr(wsTE, 4, ['Tête', 'Groupe', ...ETAPES.map(e => `Étape ${e}`), 'Total']);
+TETES.forEach((t, a) => {
+const k = 5 + a;
+put(wsTE, k, 1, `Tête ${t}`, { font: fB, fill: TF }); put(wsTE, k, 2, groupeDe[t] || 'Autre', { fill: TF });
+ETAPES.forEach((e, j) => put(wsTE, k, 3 + j, F(`SUMIFS(${D('H')},${D('E')},${t},${D('G')},${e})`, sum(LONG.filter(x => x.t === t && x.e === e), x => x.n)), { fmt: ZT, al: CE }));
+put(wsTE, k, ne + 3, F(`SUM(C${k}:${L(ne + 2)}${k})`, errTO(t)), { font: fB, fmt: ZT, al: CE });
+});
+const kte = 5 + TETES.length;
+put(wsTE, kte, 1, 'Total', { font: fB, fill: TF }); put(wsTE, kte, 2, '', { fill: TF });
+for (let j = 3; j <= ne + 3; j++) put(wsTE, kte, j, F(`SUM(${L(j)}5:${L(j)}${kte - 1})`, j <= ne + 2 ? sum(LONG.filter(x => x.e === ETAPES[j - 3]), x => x.n) : totalErr), { font: fB, fill: TF, fmt: '0', al: CE });
+heat(wsTE, `C5:${L(ne + 2)}${kte - 1}`);
+wsTE.getColumn(1).width = 10; wsTE.getColumn(2).width = 12;
+for (let j = 3; j <= ne + 3; j++) wsTE.getColumn(j).width = 9;
+
+// ---------- Par opérateur
+txt(wsPO, 'A1', 'Synthèse par opérateur', fT);
+hdr(wsPO, 3, ['Opérateur', 'Postes', 'Postes avec détail têtes', 'Fûts propres', 'Fûts en défaut', '% fûts en défaut', 'Erreurs têtes', 'Erreurs têtes par poste (avec détail)', 'Tête la plus en erreur']);
+OPS.forEach((op, a) => {
+const k = 4 + a, col = L(3 + a), rng = `'Tête × Opérateur'!$${col}$${h + 1}:$${col}$${kt - 1}`;
+const rs = R.filter(r => r.op === op), e = sum(rs, errs), ns = rs.filter(r => r.saisi).length;
+let best = ''; if (e) { let m = -1; TETES.forEach(t => { const v = errTO(t, op); if (v > m) { m = v; best = `Tête ${t}`; } }); }
+const vals = [op, F(`COUNTIFS(${RV('D')},A${k})`, rs.length), F(`COUNTIFS(${RV('D')},A${k},${RV('N')},"Oui")`, ns),
+F(`SUMIFS(${RV('I')},${RV('D')},A${k})`, sum(rs, propres)), F(`SUMIFS(${RV('J')},${RV('D')},A${k})`, sum(rs, defs)),
+F(`IF(D${k}+E${k}=0,"",E${k}/(D${k}+E${k}))`, div(sum(rs, defs), sum(rs, traites))), F(`SUMIFS(${D('H')},${D('D')},A${k})`, e),
+F(`IF(C${k}=0,"",G${k}/C${k})`, div(e, ns)),
+F(`IF(G${k}=0,"",INDEX('Tête × Opérateur'!$A$${h + 1}:$A$${kt - 1},MATCH(MAX(${rng}),${rng},0)))`, best)];
+vals.forEach((v, j) => put(wsPO, k, j + 1, v, { font: j ? fN : fB, fmt: { 5: '0.0%', 7: '0.0' }[j], al: j ? CE : undefined }));
+});
+const kpo = 4 + nc;
+put(wsPO, kpo, 1, 'Total', { font: fB, fill: TF });
+[[2, `SUM(B4:B${kpo - 1})`, NR], [3, `SUM(C4:C${kpo - 1})`, R.filter(r => r.saisi).length], [4, `SUM(D4:D${kpo - 1})`, sum(R, propres)],
+[5, `SUM(E4:E${kpo - 1})`, sum(R, defs)], [6, `IF(D${kpo}+E${kpo}=0,"",E${kpo}/(D${kpo}+E${kpo}))`, div(sum(R, defs), sum(R, traites))],
+[7, `SUM(G4:G${kpo - 1})`, totalErr], [8, `IF(C${kpo}=0,"",G${kpo}/C${kpo})`, div(totalErr, R.filter(r => r.saisi).length)]]
+.forEach(([j, f, v]) => put(wsPO, kpo, j, F(f, v), { font: fB, fill: TF, fmt: { 6: '0.0%', 8: '0.0' }[j], al: CE }));
+put(wsPO, kpo, 9, '', { fill: TF });
+larg(wsPO, [20, 8, 12, 10, 10, 10, 10, 14, 14]); wsPO.getRow(3).height = 42;
+txt(wsPO, `A${kpo + 2}`, 'Fûts = compteurs de l\'écran principal (L1 + L2). Erreurs têtes = somme des erreurs saisies par tête (onglet Données).', fI);
+
+// ---------- Opérateur × Étape
+txt(wsOE, 'A1', 'Erreurs par opérateur, par tête et par étape', fT);
+txt(wsOE, 'A2', 'Un bloc par opérateur : une ligne par tête, une colonne par étape. Case vide = aucune erreur.', fI);
+hdr(wsOE, 4, ['Opérateur', 'Tête', ...ETAPES.map(e => `Étape ${e}`), 'Total']);
+let k = 5;
+OPS.forEach(op => {
+const first = k;
+TETES.forEach(t => {
+put(wsOE, k, 1, op); put(wsOE, k, 2, t, { fmt: '"Tête "0', al: CE });
+ETAPES.forEach((e, j) => put(wsOE, k, 3 + j, F(`SUMIFS(${D('H')},${D('D')},$A${k},${D('E')},$B${k},${D('G')},${e})`, sum(LONG.filter(x => x.r.op === op && x.t === t && x.e === e), x => x.n)), { fmt: ZV, al: CE }));
+put(wsOE, k, ne + 3, F(`SUM(C${k}:${L(ne + 2)}${k})`, errTO(t, op)), { font: fB, fmt: ZV, al: CE });
+k++;
+});
+put(wsOE, k, 1, `Total ${op}`, { font: fB, fill: TF }); put(wsOE, k, 2, '', { fill: TF });
+for (let j = 3; j <= ne + 3; j++) put(wsOE, k, j, F(`SUM(${L(j)}${first}:${L(j)}${k - 1})`, j <= ne + 2 ? sum(LONG.filter(x => x.r.op === op && x.e === ETAPES[j - 3]), x => x.n) : sum(LONG.filter(x => x.r.op === op), x => x.n)), { font: fB, fill: TF, fmt: ZT, al: CE });
+heat(wsOE, `C${first}:${L(ne + 2)}${k - 1}`);
+k++;
+});
+wsOE.getColumn(1).width = 22; wsOE.getColumn(2).width = 8;
+for (let j = 3; j <= ne + 3; j++) wsOE.getColumn(j).width = 8;
+wsOE.autoFilter = `A4:${L(ne + 3)}${k - 1}`;
+
+// ---------- Lignes & postes
+txt(wsLP, 'A1', 'Lignes (L1 / L2), groupes de têtes et postes', fT);
+txt(wsLP, 'A2', 'Fûts = compteurs de l\'écran principal, par ligne. % = fûts en défaut / (propres + en défaut).', fI);
+hdr(wsLP, 4, ['Opérateur', 'Fûts propres L1', 'Défauts L1', '% défaut L1', 'Fûts propres L2', 'Défauts L2', '% défaut L2', 'Fûts propres total', 'Défauts total', '% défaut total']);
+const lpVals = rs => { const a = sum(rs, r => r.p1), b = sum(rs, r => r.d1), c = sum(rs, r => r.p2), d = sum(rs, r => r.d2); return [a, b, div(b, a + b), c, d, div(d, c + d), a + c, b + d, div(b + d, a + b + c + d)]; };
+OPS.forEach((op, a) => {
+const kk = 5 + a, v = lpVals(R.filter(r => r.op === op));
+put(wsLP, kk, 1, op, { font: fB });
+[[2, 'E'], [3, 'F'], [5, 'G'], [6, 'H'], [8, 'I'], [9, 'J']].forEach(([j, col]) => put(wsLP, kk, j, F(`SUMIFS(${RV(col)},${RV('D')},$A${kk})`, v[j - 2]), { fmt: '0', al: CE }));
+[[4, 'C', 'B'], [7, 'F', 'E'], [10, 'I', 'H']].forEach(([j, n, p]) => put(wsLP, kk, j, F(`IF(${p}${kk}+${n}${kk}=0,"",${n}${kk}/(${p}${kk}+${n}${kk}))`, v[j - 2]), { fmt: '0.0%', al: CE }));
+});
+const klt = 5 + nc, vt = lpVals(R);
+put(wsLP, klt, 1, 'Total', { font: fB, fill: TF });
+[2, 3, 5, 6, 8, 9].forEach(j => put(wsLP, klt, j, F(`SUM(${L(j)}5:${L(j)}${klt - 1})`, vt[j - 2]), { font: fB, fill: TF, fmt: '0', al: CE }));
+[[4, 'C', 'B'], [7, 'F', 'E'], [10, 'I', 'H']].forEach(([j, n, p]) => put(wsLP, klt, j, F(`IF(${p}${klt}+${n}${klt}=0,"",${n}${klt}/(${p}${klt}+${n}${klt}))`, vt[j - 2]), { font: fB, fill: TF, fmt: '0.0%', al: CE }));
+heat(wsLP, `D5:D${klt - 1}`); heat(wsLP, `G5:G${klt - 1}`);
+
+// erreurs têtes par groupe (prélaveuse / ligne 1 / ligne 2) et par opérateur
+const g0 = klt + 3;
+txt(wsLP, `A${g0 - 1}`, 'Erreurs têtes par groupe de têtes', fB);
+hdr(wsLP, g0, ['Opérateur', ...GROUPES, 'Total']);
+OPS.forEach((op, a) => {
+const kk = g0 + 1 + a; put(wsLP, kk, 1, op, { font: fB });
+GROUPES.forEach((g, j) => put(wsLP, kk, 2 + j, F(`SUMIFS(${D('H')},${D('D')},$A${kk},${D('F')},${L(2 + j)}$${g0})`, sum(LONG.filter(x => x.r.op === op && (groupeDe[x.t] || 'Autre') === g), x => x.n)), { fmt: ZT, al: CE }));
+put(wsLP, kk, GROUPES.length + 2, F(`SUM(B${kk}:${L(GROUPES.length + 1)}${kk})`, sum(LONG.filter(x => x.r.op === op), x => x.n)), { font: fB, fmt: ZT, al: CE });
+});
+const kgt = g0 + 1 + nc;
+put(wsLP, kgt, 1, 'Total', { font: fB, fill: TF });
+for (let j = 2; j <= GROUPES.length + 2; j++) put(wsLP, kgt, j, F(`SUM(${L(j)}${g0 + 1}:${L(j)}${kgt - 1})`, j <= GROUPES.length + 1 ? sum(LONG.filter(x => (groupeDe[x.t] || 'Autre') === GROUPES[j - 2]), x => x.n) : totalErr), { font: fB, fill: TF, fmt: '0', al: CE });
+heat(wsLP, `B${g0 + 1}:${L(GROUPES.length + 1)}${kgt - 1}`);
+
+const p0 = kgt + 3;
+txt(wsLP, `A${p0 - 1}`, 'Par poste', fB);
+hdr(wsLP, p0, ['Poste', 'Relevés', 'Avec détail têtes', 'Fûts propres L1', 'Défauts L1', 'Fûts propres L2', 'Défauts L2', '% défaut total', 'Erreurs têtes', 'Erreurs têtes par poste']);
+postes.forEach((po, a) => {
+const kk = p0 + 1 + a, rs = R.filter(r => r.poste === po), ns = rs.filter(r => r.saisi).length, e = sum(rs, errs);
+put(wsLP, kk, 1, po, { font: fB });
+put(wsLP, kk, 2, F(`COUNTIFS(${RV('C')},$A${kk})`, rs.length), { al: CE });
+put(wsLP, kk, 3, F(`COUNTIFS(${RV('C')},$A${kk},${RV('N')},"Oui")`, ns), { al: CE });
+[[4, 'E', r => r.p1], [5, 'F', r => r.d1], [6, 'G', r => r.p2], [7, 'H', r => r.d2]].forEach(([j, col, f]) => put(wsLP, kk, j, F(`SUMIFS(${RV(col)},${RV('C')},$A${kk})`, sum(rs, f)), { fmt: '0', al: CE }));
+put(wsLP, kk, 8, F(`IF(D${kk}+E${kk}+F${kk}+G${kk}=0,"",(E${kk}+G${kk})/(D${kk}+E${kk}+F${kk}+G${kk}))`, div(sum(rs, defs), sum(rs, traites))), { fmt: '0.0%', al: CE });
+put(wsLP, kk, 9, F(`SUMIFS(${D('H')},${D('C')},$A${kk})`, e), { fmt: '0', al: CE });
+put(wsLP, kk, 10, F(`IF(C${kk}=0,"",I${kk}/C${kk})`, div(e, ns)), { fmt: '0.0', al: CE });
+});
+const t0 = p0 + postes.length + 3;
+txt(wsLP, `A${t0 - 1}`, 'Erreurs par tête et par poste', fB);
+hdr(wsLP, t0, ['Tête', ...postes, 'Total']);
+TETES.forEach((t, a) => {
+const kk = t0 + 1 + a; put(wsLP, kk, 1, `Tête ${t}`, { font: fB, fill: TF });
+postes.forEach((po, j) => put(wsLP, kk, 2 + j, F(`SUMIFS(${D('H')},${D('E')},${t},${D('C')},${L(2 + j)}$${t0})`, sum(LONG.filter(x => x.t === t && x.r.poste === po), x => x.n)), { fmt: ZT, al: CE }));
+put(wsLP, kk, postes.length + 2, F(`SUM(B${kk}:${L(postes.length + 1)}${kk})`, sum(LONG.filter(x => x.t === t && postes.includes(x.r.poste)), x => x.n)), { font: fB, fmt: ZT, al: CE });
+});
+heat(wsLP, `B${t0 + 1}:${L(postes.length + 1)}${t0 + TETES.length}`);
+const o0 = t0 + TETES.length + 3;
+txt(wsLP, `A${o0 - 1}`, 'Erreurs têtes par opérateur et par poste', fB);
+hdr(wsLP, o0, ['Opérateur', ...postes, 'Total']);
+OPS.forEach((op, a) => {
+const kk = o0 + 1 + a; put(wsLP, kk, 1, op, { font: fB });
+postes.forEach((po, j) => put(wsLP, kk, 2 + j, F(`SUMIFS(${D('H')},${D('D')},$A${kk},${D('C')},${L(2 + j)}$${o0})`, sum(LONG.filter(x => x.r.op === op && x.r.poste === po), x => x.n)), { fmt: ZT, al: CE }));
+put(wsLP, kk, postes.length + 2, F(`SUM(B${kk}:${L(postes.length + 1)}${kk})`, sum(LONG.filter(x => x.r.op === op && postes.includes(x.r.poste)), x => x.n)), { font: fB, fmt: ZT, al: CE });
+});
+wsLP.getColumn(1).width = 20; for (let j = 2; j <= 10; j++) wsLP.getColumn(j).width = 11;
+wsLP.getRow(4).height = 30; wsLP.getRow(p0).height = 30;
+
+// ---------- Évolution
+txt(wsEV, 'A1', 'Évolution dans le temps', fT);
+txt(wsEV, 'A2', 'Semaine = semaine commençant le lundi indiqué. Case vide = pas de fûts sur cette ligne, ou pas de détail par tête.', fI);
+const w0 = 4, cH = 7, cTot = cH + TETES.length;
+hdr(wsEV, w0, ['Semaine du', 'Relevés', 'Avec détail têtes', 'Fûts traités', '% fûts en défaut L1', '% fûts en défaut L2', ...TETES.map(t => `Tête ${t}`), 'Total erreurs têtes', 'Erreurs têtes par poste', 'Libellé (graphiques)']);
+SEM.forEach((s, a) => {
+const kk = w0 + 1 + a, rs = R.filter(r => r.sem.getTime() === s.getTime()), ns = rs.filter(r => r.saisi).length;
+put(wsEV, kk, 1, s, { font: fB, fmt: 'dd/mm/yyyy' });
+put(wsEV, kk, 2, F(`COUNTIFS(${RV('O')},$A${kk})`, rs.length), { al: CE });
+put(wsEV, kk, 3, F(`COUNTIFS(${RV('O')},$A${kk},${RV('N')},"Oui")`, ns), { al: CE });
+put(wsEV, kk, 4, F(`SUMIFS(${RV('K')},${RV('O')},$A${kk})`, sum(rs, traites)), { fmt: '0', al: CE });
+[[5, 'E', 'F', r => r.p1, r => r.d1], [6, 'G', 'H', r => r.p2, r => r.d2]].forEach(([j, pc, dc, fp, fd]) => {
+const tr = sum(rs, fp) + sum(rs, fd);
+// cellule vide (et non "") quand la ligne n'a pas tourné : le graphique laisse un trou au lieu de tracer 0
+put(wsEV, kk, j, tr ? F(`SUMIFS(${RV(dc)},${RV('O')},$A${kk})/(SUMIFS(${RV(pc)},${RV('O')},$A${kk})+SUMIFS(${RV(dc)},${RV('O')},$A${kk}))`, sum(rs, fd) / tr) : null, { fmt: '0.0%', al: CE });
+});
+TETES.forEach((t, j) => put(wsEV, kk, cH + j, ns ? F(`SUMIFS(${D('H')},${D('I')},$A${kk},${D('E')},${t})`, sum(LONG.filter(x => x.t === t && x.r.sem.getTime() === s.getTime()), x => x.n)) : null, { fmt: ZT, al: CE }));
+put(wsEV, kk, cTot, F(`IF(C${kk}=0,"non saisi",SUM(${L(cH)}${kk}:${L(cTot - 1)}${kk}))`, ns ? sum(rs, errs) : 'non saisi'), { font: fB, fmt: '0', al: CE });
+put(wsEV, kk, cTot + 1, F(`IF(C${kk}=0,"",${L(cTot)}${kk}/C${kk})`, div(sum(rs, errs), ns)), { fmt: '0.0', al: CE });
+put(wsEV, kk, cTot + 2, 'Sem. ' + jj(s), { al: CE });
+});
+const wl = w0 + SEM.length;
+heat(wsEV, `${L(cH)}${w0 + 1}:${L(cTot - 1)}${wl}`);
+const j0 = wl + 3;
+txt(wsEV, `A${j0 - 1}`, 'Relevé par relevé', fB);
+hdr(wsEV, j0, ['Date', 'Poste', 'Opérateur', 'Fûts traités', '% fûts en défaut', ...TETES.map(t => `Tête ${t}`), 'Total']);
+R.forEach(r => {
+const kk = j0 + r.i, rr = r.i + 1;
+put(wsEV, kk, 1, F(`'Relevés'!B${rr}`, r.d), { fmt: 'dd/mm/yyyy' });
+put(wsEV, kk, 2, F(`'Relevés'!C${rr}`, r.poste)); put(wsEV, kk, 3, F(`'Relevés'!D${rr}`, r.op));
+put(wsEV, kk, 4, F(`'Relevés'!K${rr}`, traites(r)), { fmt: '0', al: CE });
+put(wsEV, kk, 5, F(`'Relevés'!L${rr}`, div(defs(r), traites(r))), { fmt: '0.0%', al: CE });
+TETES.forEach((t, j) => put(wsEV, kk, 6 + j, F(`IF('Relevés'!$N${rr}="Non","",SUMIFS(${D('H')},${D('A')},${r.i},${D('E')},${t}))`, r.saisi ? sum(r.det.filter(x => x.t === t), x => x.n) : ''), { fmt: ZT, al: CE }));
+put(wsEV, kk, 6 + TETES.length, F(`IF('Relevés'!$N${rr}="Non","non saisi",SUM(F${kk}:${L(5 + TETES.length)}${kk}))`, r.saisi ? errs(r) : 'non saisi'), { font: fB, fmt: '0', al: CE });
+});
+heat(wsEV, `F${j0 + 1}:${L(5 + TETES.length)}${j0 + NR}`);
+wsEV.getColumn(1).width = 12; wsEV.getColumn(2).width = 11; wsEV.getColumn(3).width = 18;
+for (let j = 4; j <= cTot + 2; j++) wsEV.getColumn(j).width = 10;
+wsEV.getRow(w0).height = 42; wsEV.getRow(j0).height = 30;
+
+// ---------- Graphiques (décrits ici, écrits dans le zip par xlAjouterGraphiques)
+txt(wsGR, 'A1', 'Graphiques', fT);
+const q = n => `'${n}'`;
+const TO = q('Tête × Opérateur'), PO = q('Par opérateur'), EV = q('Évolution'), LP = q('Lignes & postes');
+const graphiques = { feuille: 'Graphiques', liste: [
+{ type: 'col', titre: 'Erreurs par tête (tous opérateurs)', yTitre: 'Erreurs', etiquettes: true, cats: `${TO}!$A$${h + 1}:$A$${kt - 1}`,
+series: [{ nom: `${TO}!$${L(cT)}$${h}`, val: `${TO}!$${L(cT)}$${h + 1}:$${L(cT)}$${kt - 1}` }], pos: [0, 2] },
+{ type: 'col', empile: true, titre: 'Erreurs par tête, réparties par opérateur', yTitre: 'Erreurs', cats: `${TO}!$A$${h + 1}:$A$${kt - 1}`,
+series: OPS.map((_, j) => ({ nom: `${TO}!$${L(3 + j)}$${h}`, val: `${TO}!$${L(3 + j)}$${h + 1}:$${L(3 + j)}$${kt - 1}` })), pos: [11, 2] },
+{ type: 'bar', titre: 'Erreurs têtes par poste, par opérateur', yTitre: 'Erreurs par poste', etiquettes: true, fmtVal: '0.0', cats: `${PO}!$A$4:$A$${kpo - 1}`,
+series: [{ nom: `${PO}!$H$3`, val: `${PO}!$H$4:$H$${kpo - 1}` }], pos: [0, 21] },
+{ type: 'col', empile: true, titre: 'Évolution des erreurs par tête, semaine par semaine', yTitre: 'Erreurs', cats: `${EV}!$${L(cTot + 2)}$${w0 + 1}:$${L(cTot + 2)}$${wl}`,
+series: TETES.map((_, j) => ({ nom: `${EV}!$${L(cH + j)}$${w0}`, val: `${EV}!$${L(cH + j)}$${w0 + 1}:$${L(cH + j)}$${wl}` })), pos: [11, 21] },
+{ type: 'line', titre: '% de fûts en défaut par ligne, par semaine', yTitre: '% en défaut', fmtAxe: '0%', cats: `${EV}!$${L(cTot + 2)}$${w0 + 1}:$${L(cTot + 2)}$${wl}`,
+series: [{ nom: `${EV}!$E$${w0}`, val: `${EV}!$E$${w0 + 1}:$E$${wl}` }, { nom: `${EV}!$F$${w0}`, val: `${EV}!$F$${w0 + 1}:$F$${wl}` }], pos: [0, 40] },
+{ type: 'col', titre: '% de fûts en défaut par opérateur et par ligne', yTitre: '% en défaut', fmtAxe: '0%', cats: `${LP}!$A$5:$A$${klt - 1}`,
+series: [{ nom: `${LP}!$D$4`, val: `${LP}!$D$5:$D$${klt - 1}` }, { nom: `${LP}!$G$4`, val: `${LP}!$G$5:$G$${klt - 1}` }], pos: [11, 40] },
+] };
+return { wb, graphiques };
+}
+
+// ── Graphiques : DrawingML écrit à la main dans le zip produit par ExcelJS ──
+async function xlAjouterGraphiques(JSZip, buf, g) {
+const zip = await JSZip.loadAsync(buf);
+const esc_ = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+// retrouver le fichier XML de la feuille « Graphiques »
+const wbXml = await zip.file('xl/workbook.xml').async('string');
+const rels = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+const m = wbXml.match(new RegExp(`<sheet[^>]*name="${esc_(g.feuille)}"[^>]*/>`));
+if (!m) throw new Error('Feuille Graphiques introuvable');
+const rid = m[0].match(/r:id="([^"]+)"/)[1];
+const target = rels.match(new RegExp(`<Relationship[^>]*Id="${rid}"[^>]*/>`))[0].match(/Target="([^"]+)"/)[1];
+const sheetPath = 'xl/' + target.replace(/^\/?xl\//, '');
+const sheetName = sheetPath.split('/').pop();
+const A = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"';
+const rich = t => `<c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr b="1"/></a:pPr><a:r><a:t>${esc_(t)}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/>`;
+const chartXml = (c) => {
+const ser = c.series.map((s, i) => `<c:ser><c:idx val="${i}"/><c:order val="${i}"/><c:tx><c:strRef><c:f>${esc_(s.nom)}</c:f></c:strRef></c:tx>` +
+(c.type === 'line' ? '<c:marker><c:symbol val="circle"/><c:size val="5"/></c:marker>' : '') +
+`<c:cat><c:strRef><c:f>${esc_(c.cats)}</c:f></c:strRef></c:cat>` +
+`<c:val><c:numRef><c:f>${esc_(s.val)}</c:f></c:numRef></c:val>` + (c.type === 'line' ? '<c:smooth val="0"/>' : '') + '</c:ser>').join('');
+const lbl = c.etiquettes ? `<c:dLbls>${c.fmtVal ? `<c:numFmt formatCode="${c.fmtVal}" sourceLinked="0"/>` : ''}<c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/></c:dLbls>` : '';
+const plot = c.type === 'line'
+? `<c:lineChart><c:grouping val="standard"/><c:varyColors val="0"/>${ser}${lbl}<c:marker val="1"/><c:axId val="10"/><c:axId val="100"/></c:lineChart>`
+: `<c:barChart><c:barDir val="${c.type === 'bar' ? 'bar' : 'col'}"/><c:grouping val="${c.empile ? 'stacked' : 'clustered'}"/><c:varyColors val="0"/>${ser}${lbl}<c:gapWidth val="80"/>${c.empile ? '<c:overlap val="100"/>' : ''}<c:axId val="10"/><c:axId val="100"/></c:barChart>`;
+const catAx = `<c:catAx><c:axId val="10"/><c:scaling><c:orientation val="${c.type === 'bar' ? 'maxMin' : 'minMax'}"/></c:scaling><c:delete val="0"/><c:axPos val="${c.type === 'bar' ? 'l' : 'b'}"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="100"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="0"/></c:catAx>`;
+const valAx = `<c:valAx><c:axId val="100"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="${c.type === 'bar' ? 'b' : 'l'}"/><c:majorGridlines/><c:title>${rich(c.yTitre)}</c:title><c:numFmt formatCode="${c.fmtAxe || 'General'}" sourceLinked="0"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="10"/><c:crosses val="${c.type === 'bar' ? 'max' : 'autoZero'}"/><c:crossBetween val="between"/></c:valAx>`;
+const leg = c.series.length > 1 ? '<c:legend><c:legendPos val="r"/><c:overlay val="0"/></c:legend>' : '';
+return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" ${A} xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:roundedCorners val="0"/><c:chart><c:title>${rich(c.titre)}</c:title><c:autoTitleDeleted val="0"/><c:plotArea><c:layout/>${plot}${catAx}${valAx}</c:plotArea>${leg}<c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart><c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="900"><a:latin typeface="Arial"/></a:defRPr></a:pPr><a:endParaRPr lang="fr-FR"/></a:p></c:txPr></c:chartSpace>`;
+};
+// numéros libres (au cas où ExcelJS aurait déjà des dessins)
+const libre = (pref, ext) => { let n = 1; while (zip.file(`${pref}${n}${ext}`)) n++; return n; };
+const nD = libre('xl/drawings/drawing', '.xml');
+let ancres = '';
+const drRels = [];
+g.liste.forEach((c, i) => {
+const nC = libre('xl/charts/chart', '.xml');
+zip.file(`xl/charts/chart${nC}.xml`, chartXml(c));
+drRels.push(`<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart${nC}.xml"/>`);
+const [col, row] = c.pos;
+ancres += `<xdr:twoCellAnchor editAs="oneCell"><xdr:from><xdr:col>${col}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${row}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>${col + 10}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${row + 18}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>` +
+`<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${i + 2}" name="Graphique ${i + 1}"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm>` +
+`<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="rId${i + 1}"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor>`;
+});
+zip.file(`xl/drawings/drawing${nD}.xml`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" ${A} xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">${ancres}</xdr:wsDr>`);
+zip.file(`xl/drawings/_rels/drawing${nD}.xml.rels`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${drRels.join('')}</Relationships>`);
+// relation feuille → dessin
+const relPath = `xl/worksheets/_rels/${sheetName}.rels`;
+let sRels = zip.file(relPath) ? await zip.file(relPath).async('string') : '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
+let rDr = 'rIdDessin1'; while (sRels.includes(`Id="${rDr}"`)) rDr += 'x';
+sRels = sRels.replace('</Relationships>', `<Relationship Id="${rDr}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing${nD}.xml"/></Relationships>`);
+zip.file(relPath, sRels);
+let sXml = await zip.file(sheetPath).async('string');
+if (!/xmlns:r=/.test(sXml.slice(0, 600))) sXml = sXml.replace('<worksheet ', '<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
+// <drawing> se place après pageMargins/pageSetup/headerFooter, avant legacyDrawing/tableParts/extLst
+const tag = `<drawing r:id="${rDr}"/>`;
+const avant = sXml.search(/<(legacyDrawing|legacyDrawingHF|picture|oleObjects|controls|webPublishItems|tableParts|extLst)[ >\/]/);
+sXml = avant >= 0 ? sXml.slice(0, avant) + tag + sXml.slice(avant) : sXml.replace('</worksheet>', tag + '</worksheet>');
+zip.file(sheetPath, sXml);
+// types de contenu
+let ct = await zip.file('[Content_Types].xml').async('string');
+const ajout = [`<Override PartName="/xl/drawings/drawing${nD}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`];
+Object.keys(zip.files).filter(f => /^xl\/charts\/chart\d+\.xml$/.test(f) && !ct.includes(`/${f}"`))
+.forEach(f => ajout.push(`<Override PartName="/${f}" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`));
+ct = ct.replace('</Types>', ajout.join('') + '</Types>');
+zip.file('[Content_Types].xml', ct);
+return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
 }
 
 function rlvMajTot(n) {
