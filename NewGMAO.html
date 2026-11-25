@@ -3649,7 +3649,7 @@ ${canReleve()?`
 ${rlvProcedureHtml()}
 </div>
 </details>
-<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:14px 14px 6px">🏆 Meilleur laveur de fûts · ${esc(rlvMoisLbl())}</div>
+<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:14px 14px 6px">🏆 Record à battre · meilleur laveur de fûts</div>
 ${rlvPodiumHtml()}
 <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700;padding:14px 14px 6px">Défauts par tête · 30 derniers jours</div>
 <div class="card" style="padding:10px 14px">
@@ -3713,51 +3713,34 @@ ${RLV_TETES.map(teteBloc).join('')}
 </div>`);
 }
 
-// ── Classement « Meilleur laveur de fûts » (mois en cours, au volume) ──
-const RLV_MEDAILLES = ['🥇','🥈','🥉'];
-const rlvMoisCourant = () => today().slice(0, 7);
-const rlvMoisLbl = () => new Date(today()+'T12:00:00').toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
-function rlvClassement(mois) {
-const m = mois || rlvMoisCourant();
-const par = {};
-(S.releves||[]).filter(r => (r.date||'').startsWith(m)).forEach(r => {
+// ── Record « Meilleur laveur de fûts » : le plus gros poste jamais réalisé ──
+function rlvRecord() {
+let best = null;
+(S.releves||[]).forEach(r => {
 const nom = (r.operateur||'').trim(); if (!nom) return;
-const cle = nom.toLowerCase();
 const c = r.compteurs || {};
-const p = par[cle] || (par[cle] = { nom, futs: 0, defauts: 0, postes: 0 });
-p.futs += (Number(c.rempliL1)||0) + (Number(c.rempliL2)||0);
-p.defauts += (Number(c.defautL1)||0) + (Number(c.defautL2)||0);
-p.postes++;
+const futs = (Number(c.rempliL1)||0) + (Number(c.rempliL2)||0);
+if (!futs) return;
+if (!best || futs > best.futs || (futs === best.futs && (r.date||'') < (best.date||''))) best = { nom, futs, date: r.date, poste: r.poste };
 });
-// Les fûts en défaut viennent de la machine, pas de l'opérateur : ils n'entrent pas dans le classement.
-return Object.values(par)
-.map(p => ({ ...p, moy: p.postes ? Math.round(p.futs / p.postes) : 0 }))
-.sort((a, b) => b.futs - a.futs || b.moy - a.moy || a.nom.localeCompare(b.nom));
+return best;
 }
 function rlvPodiumHtml() {
-const cl = rlvClassement();
-if (!cl.length) return `<div class="card" style="padding:14px;font-size:12px;color:var(--muted)">Aucun relevé ce mois-ci : le classement démarre au premier relevé saisi.</div>`;
-const max = Math.max(1, cl[0].futs);
-const moi = rlvMoi().trim().toLowerCase();
-return `<div class="card" style="padding:10px 14px">
-${cl.map((p, i) => {
-const mien = p.nom.trim().toLowerCase() === moi;
-const coul = i === 0 ? C.accent : 'var(--text)';
-return `<div style="padding:7px 0;${i?'border-top:1px solid var(--border)22':''}">
-<div style="display:flex;align-items:center;gap:9px">
-<div style="width:26px;flex-shrink:0;font-size:${i<3?'17px':'12px'};text-align:center;color:var(--muted)">${RLV_MEDAILLES[i] || (i+1)}</div>
+const b = rlvRecord();
+if (!b) return `<div class="card" style="padding:14px;font-size:12px;color:var(--muted)">Pas encore de record : il s'établira au premier relevé saisi.</div>`;
+const mien = b.nom.trim().toLowerCase() === rlvMoi().trim().toLowerCase();
+return `<div class="card" style="padding:16px;display:flex;gap:14px;align-items:center;border-left:3px solid ${C.accent}">
+<div style="font-size:32px;flex-shrink:0">🥇</div>
 <div style="flex:1;min-width:0">
-<div style="font-size:13px;font-weight:${i===0?800:700};color:${coul}">${esc(p.nom)}${mien?' <span style="font-size:10px;color:var(--muted)">(toi)</span>':''}</div>
-<div style="font-size:10px;color:var(--muted)">${p.postes} poste${p.postes>1?'s':''} · ${p.moy} fûts/poste</div>
+<div style="font-size:17px;font-weight:800;color:${C.accent}">${esc(b.nom)}${mien?' <span style="font-size:11px;color:var(--muted);font-weight:600">(toi)</span>':''}</div>
+<div style="font-size:11px;color:var(--muted);margin-top:2px">${rlvDateFr(b.date)}${b.poste?` · ${esc(b.poste)}`:''}</div>
 </div>
-<div class="mono" style="font-weight:800;font-size:15px;color:${coul};flex-shrink:0">${p.futs}</div>
+<div style="text-align:right;flex-shrink:0">
+<div class="mono" style="font-size:22px;font-weight:800;color:${C.accent};line-height:1">${b.futs}</div>
+<div style="font-size:10px;color:var(--muted)">fûts en un poste</div>
 </div>
-<div style="height:5px;background:var(--surface2);border-radius:3px;overflow:hidden;margin:4px 0 0 35px"><div style="height:100%;width:${p.futs/max*100}%;background:${i===0?C.accent:C.info};opacity:${i===0?1:.6}"></div></div>
-</div>`;
-}).join('')}
 </div>`;
 }
-
 const rlvTotFuts = c => {
 const a = Number((c||{}).rempliL1), b = Number((c||{}).rempliL2);
 const ok = [a, b].filter(v => Number.isFinite(v));
